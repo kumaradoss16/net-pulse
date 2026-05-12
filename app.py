@@ -5,7 +5,6 @@ import time
 import ssl
 import urllib.request
 import socketio
-import os
 
 app = Flask(__name__)
 # Change this line at the top
@@ -180,6 +179,7 @@ def run_speedtest():
         }
     )
 
+import os
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
