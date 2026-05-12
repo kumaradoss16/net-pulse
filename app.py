@@ -1,34 +1,15 @@
-import os
-import ssl
+from flask import Flask, render_template, Response, jsonify, request
+import speedtest
 import json
 import time
-import threading
-import datetime
+import ssl
 import urllib.request
+import socketio
+import os
 
-from flask import Flask, render_template, Response, jsonify, request
-from flask_socketio import SocketIO, emit
-import speedtest
-import psutil
-
-# ── App setup ────────────────────────────────────────────
 app = Flask(__name__)
-app.config["SECRET_KEY"] = "netpulse-secret-key"
 
-socketio = SocketIO(
-    app,
-    cors_allowed_origins="*",
-    async_mode="gevent",        # gevent is more stable on Render than eventlet
-    logger=False,
-    engineio_logger=False,
-)
-
-# ── Connected WebSocket clients ───────────────────────────
-connected_clients = {}
-
-# ══════════════════════════════════════════════════════════
-# Helpers
-# ══════════════════════════════════════════════════════════
+# ── Helpers ──────────────────────────────────────────────
 
 def get_public_ip():
     services = [
@@ -47,162 +28,13 @@ def get_public_ip():
             continue
     return "Unavailable"
 
-
 def get_speedtest_instance():
     try:
         return speedtest.Speedtest(secure=True)
     except Exception:
         return speedtest.Speedtest()
 
-
-def get_system_stats():
-    net = psutil.net_io_counters()
-    return {
-        "cpu":          round(psutil.cpu_percent(interval=None), 1),
-        "ram":          round(psutil.virtual_memory().percent, 1),
-        "ram_used_gb":  round(psutil.virtual_memory().used  / 1e9, 2),
-        "ram_total_gb": round(psutil.virtual_memory().total / 1e9, 2),
-        "net_sent_mb":  round(net.bytes_sent / 1e6, 2),
-        "net_recv_mb":  round(net.bytes_recv / 1e6, 2),
-        "timestamp":    datetime.datetime.now().strftime("%H:%M:%S"),
-    }
-
-# ══════════════════════════════════════════════════════════
-# Background broadcaster — pushes live stats every 2s
-# ══════════════════════════════════════════════════════════
-_broadcast_thread = None
-_broadcast_lock   = threading.Lock()
-
-
-def broadcast_loop():
-    prev_net = psutil.net_io_counters()
-    while True:
-        socketio.sleep(2)
-        if not connected_clients:
-            continue
-        net       = psutil.net_io_counters()
-        sent_rate = round((net.bytes_sent - prev_net.bytes_sent) / 2 / 1024, 1)
-        recv_rate = round((net.bytes_recv - prev_net.bytes_recv) / 2 / 1024, 1)
-        prev_net  = net
-        stats     = get_system_stats()
-        stats["net_send_rate_kbps"] = sent_rate
-        stats["net_recv_rate_kbps"] = recv_rate
-        stats["clients"]            = len(connected_clients)
-        socketio.emit("live_stats", stats, namespace="/ws")
-
-# ══════════════════════════════════════════════════════════
-# WebSocket events  (/ws namespace)
-# ══════════════════════════════════════════════════════════
-
-@socketio.on("connect", namespace="/ws")
-def ws_connect():
-    global _broadcast_thread
-    sid = request.sid
-    connected_clients[sid] = {
-        "ip":           request.remote_addr,
-        "connected_at": datetime.datetime.now().strftime("%H:%M:%S"),
-    }
-    emit("connected", {
-        "sid":     sid,
-        "clients": len(connected_clients),
-        "message": "WebSocket connected",
-        "stats":   get_system_stats(),
-    })
-    socketio.emit(
-        "client_update",
-        {"clients": len(connected_clients)},
-        namespace="/ws",
-    )
-    with _broadcast_lock:
-        if _broadcast_thread is None or not _broadcast_thread.is_alive():
-            _broadcast_thread = socketio.start_background_task(broadcast_loop)
-
-
-@socketio.on("disconnect", namespace="/ws")
-def ws_disconnect():
-    connected_clients.pop(request.sid, None)
-    socketio.emit(
-        "client_update",
-        {"clients": len(connected_clients)},
-        namespace="/ws",
-    )
-
-
-@socketio.on("ping_check", namespace="/ws")
-def ws_ping(data):
-    emit("pong_check", {
-        "echo":      data,
-        "server_ts": datetime.datetime.now().isoformat(),
-        "clients":   len(connected_clients),
-    })
-
-
-@socketio.on("request_stats", namespace="/ws")
-def ws_request_stats():
-    emit("live_stats", get_system_stats())
-
-
-@socketio.on("start_ws_speedtest", namespace="/ws")
-def ws_speedtest(data):
-    sid       = request.sid
-    server_id = data.get("server_id") if data else None
-
-    def run():
-        def push(payload):
-            socketio.emit("ws_test_update", payload, room=sid, namespace="/ws")
-
-        push({"stage": "server", "status": "Connecting to server…"})
-        try:
-            st = get_speedtest_instance()
-            if server_id:
-                st.get_servers([int(server_id)])
-            st.get_best_server()
-
-            server       = st.results.server
-            server_name  = server.get("name", "Unknown")
-            server_cntry = server.get("country", "")
-            server_label = f"{server_name}, {server_cntry}"
-
-            push({
-                "stage":    "server",
-                "status":   "Connected",
-                "server":   server_label,
-                "sponsor":  server.get("sponsor", ""),
-                "host":     server.get("host", ""),
-                "distance": round(server.get("d", 0), 1),
-                "country":  server_cntry,
-            })
-            time.sleep(0.2)
-
-            push({"stage": "ping", "status": "Measuring ping…"})
-            ping = round(st.results.ping, 2)
-            push({"stage": "ping", "status": "Done", "value": ping})
-            time.sleep(0.2)
-
-            push({"stage": "download", "status": "Testing download…"})
-            download = round(st.download() / 1_000_000, 2)
-            push({"stage": "download", "status": "Done", "value": download})
-            time.sleep(0.2)
-
-            push({"stage": "upload", "status": "Testing upload…"})
-            upload = round(st.upload() / 1_000_000, 2)
-            push({"stage": "upload", "status": "Done", "value": upload})
-
-            push({
-                "stage":    "complete",
-                "ping":     ping,
-                "download": download,
-                "upload":   upload,
-            })
-
-        except Exception as e:
-            push({"stage": "error", "message": str(e)})
-
-    socketio.start_background_task(run)
-
-# ══════════════════════════════════════════════════════════
-# HTTP Routes
-# ══════════════════════════════════════════════════════════
+# ── Routes ───────────────────────────────────────────────
 
 @app.route("/")
 def index():
@@ -211,70 +43,86 @@ def index():
 
 @app.route("/get-ip")
 def get_ip():
-    return jsonify({"ip": get_public_ip()})
+    ip = get_public_ip()
+    return jsonify({"ip": ip})
 
 
+# ── NEW: GeoIP + ISP lookup ──────────────────────────────
 @app.route("/get-geoip")
 def get_geoip():
+    """
+    Returns ISP, org, city, region, country, loc (lat,lon)
+    using ipinfo.io (free tier — 50k req/month, no key needed).
+    """
     try:
         with urllib.request.urlopen("https://ipinfo.io/json", timeout=6) as res:
             data = json.loads(res.read().decode())
         return jsonify({
             "ip":       data.get("ip",       "N/A"),
-            "isp":      data.get("org",      "N/A"),
-            "city":     data.get("city",     "N/A"),
-            "region":   data.get("region",   "N/A"),
-            "country":  data.get("country",  "N/A"),
-            "loc":      data.get("loc",      "N/A"),
-            "timezone": data.get("timezone", "N/A"),
-            "hostname": data.get("hostname", "N/A"),
+            "isp":      data.get("org",       "N/A"),   # e.g. "AS9829 BSNL"
+            "city":     data.get("city",      "N/A"),
+            "region":   data.get("region",    "N/A"),
+            "country":  data.get("country",   "N/A"),
+            "loc":      data.get("loc",       "N/A"),   # "12.9716,77.5946"
+            "timezone": data.get("timezone",  "N/A"),
+            "hostname": data.get("hostname",  "N/A"),
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
+# ── NEW: List nearby speedtest servers ───────────────────
 @app.route("/get-servers")
 def get_servers():
+    """
+    Returns a list of the 10 closest speedtest.net servers
+    with id, name, country, sponsor, distance (km), host.
+    """
     try:
         st = get_speedtest_instance()
-        st.get_servers()
-        st.get_best_server()
+        st.get_servers()          # fetch all servers
+        st.get_best_server()      # also sets closest list
+        # servers dict is keyed by distance bucket
         flat = []
         for dist_list in st.servers.values():
             for s in dist_list:
                 flat.append({
-                    "id":       s.get("id",      ""),
-                    "name":     s.get("name",    ""),
+                    "id":       s.get("id", ""),
+                    "name":     s.get("name", ""),
                     "country":  s.get("country", ""),
                     "sponsor":  s.get("sponsor", ""),
                     "distance": round(s.get("d", 0), 1),
-                    "host":     s.get("host",    ""),
-                    "lat":      s.get("lat",     ""),
-                    "lon":      s.get("lon",     ""),
+                    "host":     s.get("host", ""),
+                    "lat":      s.get("lat", ""),
+                    "lon":      s.get("lon", ""),
                 })
+        # sort by distance, return top 10
         flat.sort(key=lambda x: x["distance"])
         return jsonify({"servers": flat[:10]})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
+# ── NEW: Run speedtest against a specific server id ──────
 @app.route("/run-speedtest")
 def run_speedtest():
-    server_id = request.args.get("server_id", None)
+    server_id = request.args.get("server_id", None)   # optional ?server_id=1234
 
     def generate():
         try:
             yield f"data: {json.dumps({'stage': 'server', 'status': 'Connecting to server…'})}\n\n"
 
             st = get_speedtest_instance()
-            if server_id:
-                st.get_servers([int(server_id)])
-            st.get_best_server()
 
-            server       = st.results.server
-            server_name  = server.get("name", "Unknown")
-            server_cntry = server.get("country", "")
-            server_label = f"{server_name}, {server_cntry}"
+            if server_id:
+                # Use user-chosen server
+                st.get_servers([int(server_id)])
+                st.get_best_server()
+            else:
+                st.get_best_server()
+
+            server      = st.results.server
+            server_label = f"{server.get('name','Unknown')}, {server.get('country','')}"
             server_info  = {
                 "stage":    "server",
                 "status":   "Connected",
@@ -282,7 +130,7 @@ def run_speedtest():
                 "sponsor":  server.get("sponsor", ""),
                 "host":     server.get("host", ""),
                 "distance": round(server.get("d", 0), 1),
-                "country":  server_cntry,
+                "country":  server.get("country", ""),
             }
             yield f"data: {json.dumps(server_info)}\n\n"
             time.sleep(0.3)
@@ -324,9 +172,6 @@ def run_speedtest():
         }
     )
 
-# ══════════════════════════════════════════════════════════
-# Entry point
-# ══════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
