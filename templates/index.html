@@ -1,0 +1,1601 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NetPulse</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        *,
+        *::before,
+        *::after {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg: #0a0a0a;
+            --surface: #111111;
+            --surface2: #161616;
+            --surface3: #1c1c1c;
+            --border: #222222;
+            --border2: #2a2a2a;
+            --cyan: #22d3ee;
+            --cyan-dim: #22d3ee18;
+            --cyan-glow: #22d3ee40;
+            --violet: #818cf8;
+            --green: #34d399;
+            --amber: #fbbf24;
+            --rose: #f87171;
+            --text: #e4e4e7;
+            --text2: #71717a;
+            --text3: #3f3f46;
+            --sub: #52525b;
+        }
+
+        html,
+        body {
+            height: 100%;
+        }
+
+        body {
+            background: var(--bg);
+            font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+            color: var(--text);
+            display: flex;
+            align-items: flex-start;
+            justify-content: center;
+            padding: 32px 16px 60px;
+            min-height: 100vh;
+        }
+
+        /* ══ Layout ══ */
+        .main {
+            width: 100%;
+            max-width: 960px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        /* ══ Card base ══ */
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            overflow: hidden;
+        }
+
+        /* ══ Top bar ══ */
+        .topbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 14px 20px;
+            border-bottom: 1px solid var(--border);
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        .topbar-left {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .status-dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: var(--text3);
+            transition: background .3s, box-shadow .3s;
+        }
+
+        .status-dot.active {
+            background: var(--cyan);
+            box-shadow: 0 0 8px var(--cyan-glow);
+            animation: blink 1.8s ease-in-out infinite;
+        }
+
+        @keyframes blink {
+
+            0%,
+            100% {
+                box-shadow: 0 0 5px var(--cyan-glow);
+            }
+
+            50% {
+                box-shadow: 0 0 14px var(--cyan);
+            }
+        }
+
+        .brand {
+            font-size: 0.85rem;
+            font-weight: 700;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+            color: var(--text);
+        }
+
+        .topbar-right {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .chip {
+            font-size: 0.62rem;
+            color: var(--text2);
+            border: 1px solid var(--border2);
+            border-radius: 6px;
+            padding: 3px 9px;
+            letter-spacing: 0.5px;
+            background: var(--surface2);
+            transition: border-color .3s, color .3s;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .chip.live {
+            border-color: #22d3ee30;
+            color: var(--cyan);
+        }
+
+        .chip.error {
+            border-color: #f8717130;
+            color: var(--rose);
+        }
+
+        .chip.label {
+            color: var(--text3);
+            border-color: var(--border);
+            cursor: default;
+        }
+
+        .server-chip {
+            font-size: 0.6rem;
+            color: var(--text3);
+            max-width: 180px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        /* ══ Main body — dial side by side mini stats ══ */
+        .test-body {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 0;
+        }
+
+        /* ── Dial column ── */
+        .dial-col {
+            padding: 28px 24px 24px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 20px;
+            border-right: 1px solid var(--border);
+        }
+
+        .dial-wrap {
+            position: relative;
+            width: 260px;
+            height: 260px;
+        }
+
+        #speedo {
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+
+        .dial-readout {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            pointer-events: none;
+        }
+
+        .dr-val {
+            font-size: 3rem;
+            font-weight: 800;
+            color: var(--text);
+            line-height: 1;
+            letter-spacing: -3px;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .dr-unit {
+            font-size: 0.6rem;
+            color: var(--sub);
+            letter-spacing: 3px;
+            text-transform: uppercase;
+            margin-top: 6px;
+        }
+
+        .dr-stage {
+            font-size: 0.58rem;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            color: var(--text3);
+            margin-top: 10px;
+            min-height: 12px;
+            transition: color .3s;
+        }
+
+        .dr-stage.live {
+            color: var(--cyan);
+        }
+
+        /* ── Load bars ── */
+        .load-bars {
+            width: 260px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .lb-row {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .lb-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .lb-lbl {
+            font-size: 0.6rem;
+            color: var(--text3);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .lb-pct {
+            font-size: 0.6rem;
+            color: var(--text3);
+            font-variant-numeric: tabular-nums;
+            transition: color .3s;
+        }
+
+        .lb-pct.active {
+            color: var(--cyan);
+        }
+
+        .lb-track {
+            height: 3px;
+            background: var(--border2);
+            border-radius: 3px;
+            overflow: hidden;
+        }
+
+        .lb-fill {
+            height: 100%;
+            width: 0%;
+            border-radius: 3px;
+            transition: width .4s ease;
+            position: relative;
+        }
+
+        .lb-fill.dl {
+            background: linear-gradient(90deg, #0e7490, var(--cyan));
+        }
+
+        .lb-fill.ul {
+            background: linear-gradient(90deg, #4338ca, var(--violet));
+        }
+
+        .lb-fill::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(90deg, transparent, #ffffff15, transparent);
+            animation: shim 1.4s linear infinite;
+        }
+
+        @keyframes shim {
+            0% {
+                transform: translateX(-100%);
+            }
+
+            100% {
+                transform: translateX(200%);
+            }
+        }
+
+        .lb-row.hidden {
+            display: none;
+        }
+
+        /* ── Right column — stats + controls ── */
+        .right-col {
+            padding: 28px 28px 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        /* Stat grid */
+        .stat-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 10px;
+        }
+
+        .stat-card {
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 14px 12px 12px;
+            position: relative;
+            overflow: hidden;
+            transition: border-color .3s;
+        }
+
+        .stat-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: transparent;
+            transition: background .3s;
+        }
+
+        .stat-card.active::before {
+            background: var(--cyan);
+        }
+
+        .stat-card.done::before {
+            background: var(--green);
+        }
+
+        .stat-card.active {
+            border-color: #22d3ee20;
+        }
+
+        .stat-card.done {
+            border-color: #34d39920;
+        }
+
+        .sc-label {
+            font-size: 0.58rem;
+            color: var(--text3);
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            margin-bottom: 8px;
+        }
+
+        .sc-val {
+            font-size: 1.6rem;
+            font-weight: 700;
+            color: var(--text);
+            line-height: 1;
+            font-variant-numeric: tabular-nums;
+            letter-spacing: -1px;
+        }
+
+        .sc-unit {
+            font-size: 0.58rem;
+            color: var(--text3);
+            margin-top: 4px;
+            letter-spacing: 0.5px;
+        }
+
+        .sc-badge {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            font-size: 0.52rem;
+            color: var(--text3);
+            background: var(--surface3);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 1px 5px;
+            transition: color .3s, border-color .3s;
+        }
+
+        .stat-card.active .sc-badge {
+            color: var(--cyan);
+            border-color: #22d3ee25;
+        }
+
+        .stat-card.done .sc-badge {
+            color: var(--green);
+            border-color: #34d39925;
+        }
+
+        /* Server selection inline row */
+        .srv-inline {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .srv-inline-label {
+            font-size: 0.6rem;
+            color: var(--text3);
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+        }
+
+        .srv-inline-row {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .srv-select-wrap {
+            flex: 1;
+            position: relative;
+        }
+
+        .srv-select {
+            width: 100%;
+            background: var(--surface2);
+            border: 1px solid var(--border2);
+            border-radius: 8px;
+            color: var(--text2);
+            font-size: 0.72rem;
+            padding: 8px 12px;
+            appearance: none;
+            cursor: pointer;
+            transition: border-color .2s;
+            outline: none;
+            font-family: inherit;
+        }
+
+        .srv-select:focus {
+            border-color: #22d3ee30;
+        }
+
+        .srv-select option {
+            background: var(--surface);
+        }
+
+        .srv-select-arrow {
+            position: absolute;
+            right: 10px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 0;
+            height: 0;
+            border-left: 4px solid transparent;
+            border-right: 4px solid transparent;
+            border-top: 5px solid var(--text3);
+            pointer-events: none;
+        }
+
+        /* Buttons */
+        .btn-row {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .btn-primary {
+            flex: 1;
+            padding: 10px 20px;
+            background: var(--cyan);
+            border: none;
+            border-radius: 8px;
+            color: #000;
+            font-size: 0.8rem;
+            font-weight: 700;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: opacity .2s, transform .1s;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            opacity: .85;
+            transform: translateY(-1px);
+        }
+
+        .btn-primary:active:not(:disabled) {
+            transform: none;
+        }
+
+        .btn-primary:disabled {
+            opacity: .2;
+            cursor: not-allowed;
+        }
+
+        .btn-ghost {
+            padding: 10px 14px;
+            background: none;
+            border: 1px solid var(--border2);
+            border-radius: 8px;
+            color: var(--text2);
+            font-size: 0.72rem;
+            cursor: pointer;
+            transition: border-color .2s, color .2s, background .2s;
+            white-space: nowrap;
+            font-family: inherit;
+        }
+
+        .btn-ghost:hover:not(:disabled) {
+            border-color: var(--border);
+            color: var(--text);
+            background: var(--surface2);
+        }
+
+        .btn-ghost:disabled {
+            opacity: .25;
+            cursor: not-allowed;
+        }
+
+        /* Progress / status row */
+        .prog-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .prog-track {
+            flex: 1;
+            height: 2px;
+            background: var(--border);
+            border-radius: 2px;
+            overflow: hidden;
+        }
+
+        .prog-fill {
+            height: 100%;
+            width: 0%;
+            background: var(--cyan);
+            border-radius: 2px;
+            transition: width .6s cubic-bezier(.4, 0, .2, 1);
+        }
+
+        .prog-pct {
+            font-size: 0.6rem;
+            color: var(--text3);
+            width: 28px;
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .status-txt {
+            font-size: 0.72rem;
+            color: var(--text3);
+            min-height: 16px;
+        }
+
+        .spin {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border: 1.5px solid var(--border2);
+            border-top-color: var(--cyan);
+            border-radius: 50%;
+            animation: rot .5s linear infinite;
+            margin-right: 6px;
+            vertical-align: middle;
+        }
+
+        @keyframes rot {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        /* ══ Bottom grid — 2 col ══ */
+        .bottom-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+
+        /* ── Section header ── */
+        .sec-hdr {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 14px 20px 12px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .sec-title {
+            font-size: 0.65rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            color: var(--text2);
+        }
+
+        .sec-meta {
+            font-size: 0.6rem;
+            color: var(--text3);
+        }
+
+        .sec-btn {
+            font-size: 0.6rem;
+            color: var(--text3);
+            background: none;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 2px 8px;
+            cursor: pointer;
+            font-family: inherit;
+            transition: color .2s, border-color .2s;
+        }
+
+        .sec-btn:hover {
+            color: var(--rose);
+            border-color: #f8717130;
+        }
+
+        /* ── Chart ── */
+        .chart-body {
+            padding: 16px 20px 20px;
+            display: flex;
+            flex-direction: column;
+            height: 300px;
+        }
+
+        .tab-row {
+            display: flex;
+            gap: 4px;
+            margin-bottom: 14px;
+        }
+
+        .tab {
+            font-size: 0.6rem;
+            padding: 4px 10px;
+            border-radius: 4px;
+            border: 1px solid var(--border);
+            background: none;
+            color: var(--text3);
+            cursor: pointer;
+            transition: all .2s;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-family: inherit;
+        }
+
+        .tab.active {
+            background: var(--surface3);
+            border-color: var(--border2);
+            color: var(--text);
+        }
+
+        .chart-empty {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.72rem;
+            color: var(--text3);
+        }
+
+        .chart-wrap {
+            flex: 1;
+            position: relative;
+            min-height: 0;
+        }
+
+        /* ── History ── */
+        .hist-scroll {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .hist-scroll::-webkit-scrollbar {
+            width: 3px;
+        }
+
+        .hist-scroll::-webkit-scrollbar-thumb {
+            background: var(--border2);
+            border-radius: 3px;
+        }
+
+        .hist-empty {
+            padding: 40px 0;
+            text-align: center;
+            font-size: 0.72rem;
+            color: var(--text3);
+        }
+
+        .hist-item {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            padding: 12px 20px;
+            border-bottom: 1px solid var(--border);
+            transition: background .15s;
+        }
+
+        .hist-item:last-child {
+            border-bottom: none;
+        }
+
+        .hist-item:hover {
+            background: var(--surface2);
+        }
+
+        .hist-index {
+            font-size: 0.6rem;
+            color: var(--text3);
+            width: 16px;
+            text-align: right;
+            flex-shrink: 0;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .hist-bar {
+            width: 2px;
+            height: 28px;
+            border-radius: 2px;
+            background: var(--border2);
+            flex-shrink: 0;
+            transition: background .3s;
+        }
+
+        .hist-item:hover .hist-bar {
+            background: var(--cyan);
+        }
+
+        .hist-content {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .hist-time {
+            font-size: 0.6rem;
+            color: var(--text3);
+            margin-bottom: 4px;
+        }
+
+        .hist-vals {
+            display: flex;
+            gap: 14px;
+        }
+
+        .hv {
+            font-size: 0.68rem;
+            font-variant-numeric: tabular-nums;
+            color: var(--text2);
+        }
+
+        .hv b {
+            font-weight: 700;
+        }
+
+        .hv.dl b {
+            color: var(--cyan);
+        }
+
+        .hv.ul b {
+            color: var(--violet);
+        }
+
+        .hv.pg b {
+            color: var(--green);
+        }
+
+        .hist-badge {
+            font-size: 0.56rem;
+            padding: 2px 7px;
+            border-radius: 4px;
+            border: 1px solid var(--border);
+            color: var(--text3);
+            flex-shrink: 0;
+            font-weight: 500;
+        }
+
+        .hist-badge.excellent {
+            color: var(--cyan);
+            border-color: #22d3ee25;
+        }
+
+        .hist-badge.good {
+            color: var(--green);
+            border-color: #34d39925;
+        }
+
+        .hist-badge.fair {
+            color: var(--amber);
+            border-color: #fbbf2425;
+        }
+
+        .hist-badge.poor {
+            color: var(--rose);
+            border-color: #f8717125;
+        }
+
+        /* ══ Feature row — 3 col ══ */
+        .feature-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 12px;
+        }
+
+        /* ── GeoIP ── */
+        .geo-body {
+            padding: 16px 20px 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 0;
+        }
+
+        .geo-row {
+            display: flex;
+            align-items: flex-start;
+            gap: 0;
+            padding: 9px 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .geo-row:last-of-type {
+            border-bottom: none;
+        }
+
+        .geo-key {
+            font-size: 0.58rem;
+            color: var(--text3);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            width: 80px;
+            flex-shrink: 0;
+            padding-top: 1px;
+        }
+
+        .geo-val {
+            font-size: 0.74rem;
+            font-weight: 500;
+            color: var(--text);
+            flex: 1;
+            min-width: 0;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .geo-val.loading {
+            color: var(--text3);
+            font-weight: 400;
+        }
+
+        .geo-refresh-row {
+            padding-top: 12px;
+        }
+
+        /* ── Server select card ── */
+        .srv-body {
+            padding: 14px 20px 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .srv-scroll {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .srv-scroll::-webkit-scrollbar {
+            width: 3px;
+        }
+
+        .srv-scroll::-webkit-scrollbar-thumb {
+            background: var(--border2);
+            border-radius: 3px;
+        }
+
+        .srv-empty {
+            font-size: 0.7rem;
+            color: var(--text3);
+            padding: 16px 0;
+            text-align: center;
+        }
+
+        .srv-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 10px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            cursor: pointer;
+            transition: border-color .2s, background .2s;
+            background: var(--surface2);
+        }
+
+        .srv-row:hover {
+            border-color: var(--border2);
+            background: var(--surface3);
+        }
+
+        .srv-row.active {
+            border-color: #22d3ee30;
+            background: #22d3ee08;
+        }
+
+        .srv-radio {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            border: 1.5px solid var(--text3);
+            flex-shrink: 0;
+            transition: border-color .2s, background .2s;
+        }
+
+        .srv-row.active .srv-radio {
+            border-color: var(--cyan);
+            background: var(--cyan);
+        }
+
+        .srv-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .srv-name {
+            font-size: 0.7rem;
+            font-weight: 500;
+            color: var(--text);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .srv-sponsor {
+            font-size: 0.58rem;
+            color: var(--text3);
+            margin-top: 1px;
+        }
+
+        .srv-row.active .srv-name {
+            color: var(--cyan);
+        }
+
+        .srv-km {
+            font-size: 0.6rem;
+            color: var(--text3);
+            flex-shrink: 0;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .auto-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .auto-lbl {
+            font-size: 0.6rem;
+            color: var(--text3);
+        }
+
+        /* ── Connection info ── */
+        .conn-body {
+            padding: 16px 20px 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 0;
+        }
+
+        .conn-row {
+            display: flex;
+            align-items: flex-start;
+            padding: 9px 0;
+            border-bottom: 1px solid var(--border);
+            gap: 0;
+        }
+
+        .conn-row:last-child {
+            border-bottom: none;
+        }
+
+        .conn-key {
+            font-size: 0.58rem;
+            color: var(--text3);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            width: 80px;
+            flex-shrink: 0;
+            padding-top: 1px;
+        }
+
+        .conn-val {
+            font-size: 0.74rem;
+            font-weight: 500;
+            color: var(--text2);
+            flex: 1;
+            min-width: 0;
+            word-break: break-all;
+        }
+
+        .conn-val.hi {
+            color: var(--text);
+        }
+
+        /* ══ Responsive ══ */
+        @media (max-width: 720px) {
+            .test-body {
+                grid-template-columns: 1fr;
+            }
+
+            .dial-col {
+                border-right: none;
+                border-bottom: 1px solid var(--border);
+            }
+
+            .bottom-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .feature-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .load-bars {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="main">
+
+        <!-- ══ Speed Test Card ══ -->
+        <div class="card">
+
+            <!-- Top bar -->
+            <div class="topbar">
+                <div class="topbar-left">
+                    <div class="status-dot" id="dot"></div>
+                    <span class="brand">NetPulse</span>
+                </div>
+                <div class="topbar-right">
+                    <span class="server-chip" id="server-chip"></span>
+                    <span class="chip label" id="ip-chip">---.---.---.---</span>
+                    <span class="chip label">SSE</span>
+                </div>
+            </div>
+
+            <!-- Test body -->
+            <div class="test-body">
+
+                <!-- Dial column -->
+                <div class="dial-col">
+                    <div class="dial-wrap">
+                        <canvas id="speedo" width="260" height="260"></canvas>
+                        <div class="dial-readout">
+                            <div class="dr-val" id="dr-val">0</div>
+                            <div class="dr-unit">Mbps</div>
+                            <div class="dr-stage" id="dr-stage">Idle</div>
+                        </div>
+                    </div>
+
+                    <div class="load-bars">
+                        <div class="lb-row hidden" id="lb-dl">
+                            <div class="lb-header">
+                                <span class="lb-lbl">Download</span>
+                                <span class="lb-pct active" id="lb-dl-pct">0%</span>
+                            </div>
+                            <div class="lb-track">
+                                <div class="lb-fill dl" id="lb-dl-fill"></div>
+                            </div>
+                        </div>
+                        <div class="lb-row hidden" id="lb-ul">
+                            <div class="lb-header">
+                                <span class="lb-lbl">Upload</span>
+                                <span class="lb-pct active" id="lb-ul-pct">0%</span>
+                            </div>
+                            <div class="lb-track">
+                                <div class="lb-fill ul" id="lb-ul-fill"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Right column -->
+                <div class="right-col">
+
+                    <!-- Stat cards -->
+                    <div class="stat-grid">
+                        <div class="stat-card" id="sc-ping">
+                            <div class="sc-label">Ping</div>
+                            <div class="sc-val" id="sv-ping">--</div>
+                            <div class="sc-unit">ms</div>
+                            <span class="sc-badge" id="sb-ping">—</span>
+                        </div>
+                        <div class="stat-card" id="sc-dl">
+                            <div class="sc-label">Download</div>
+                            <div class="sc-val" id="sv-dl">--</div>
+                            <div class="sc-unit">Mbps</div>
+                            <span class="sc-badge" id="sb-dl">—</span>
+                        </div>
+                        <div class="stat-card" id="sc-ul">
+                            <div class="sc-label">Upload</div>
+                            <div class="sc-val" id="sv-ul">--</div>
+                            <div class="sc-unit">Mbps</div>
+                            <span class="sc-badge" id="sb-ul">—</span>
+                        </div>
+                    </div>
+
+                    <!-- Server selector -->
+                    <div class="srv-inline">
+                        <div class="srv-inline-label">Server</div>
+                        <div class="srv-inline-row">
+                            <div class="srv-select-wrap">
+                                <select class="srv-select" id="srv-dropdown">
+                                    <option value="">Auto — Best Server</option>
+                                </select>
+                                <div class="srv-select-arrow"></div>
+                            </div>
+                            <button class="btn-ghost" id="srv-load-btn" onclick="fetchServers()">Load</button>
+                        </div>
+                    </div>
+
+                    <!-- Spacer -->
+                    <div style="flex:1"></div>
+
+                    <!-- Progress -->
+                    <div style="display:flex;flex-direction:column;gap:8px;">
+                        <div class="prog-row">
+                            <div class="prog-track">
+                                <div class="prog-fill" id="bar"></div>
+                            </div>
+                            <div class="prog-pct" id="pct">0%</div>
+                        </div>
+                        <div class="status-txt" id="status">Ready</div>
+                    </div>
+
+                    <!-- Action row -->
+                    <div class="btn-row">
+                        <button class="btn-primary" id="btn" onclick="startTest()">Start Test</button>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+
+        <!-- ══ Feature row ══ -->
+        <div class="feature-grid">
+
+            <!-- GeoIP + ISP -->
+            <div class="card">
+                <div class="sec-hdr">
+                    <span class="sec-title">Network Info</span>
+                    <span class="sec-meta" id="geo-badge">Loading</span>
+                </div>
+                <div class="geo-body">
+                    <div class="geo-row">
+                        <span class="geo-key">ISP</span>
+                        <span class="geo-val loading" id="geo-isp">—</span>
+                    </div>
+                    <div class="geo-row">
+                        <span class="geo-key">City</span>
+                        <span class="geo-val loading" id="geo-loc">—</span>
+                    </div>
+                    <div class="geo-row">
+                        <span class="geo-key">Country</span>
+                        <span class="geo-val loading" id="geo-country">—</span>
+                    </div>
+                    <div class="geo-row">
+                        <span class="geo-key">Timezone</span>
+                        <span class="geo-val loading" id="geo-tz">—</span>
+                    </div>
+                    <div class="geo-row">
+                        <span class="geo-key">Hostname</span>
+                        <span class="geo-val loading" id="geo-host">—</span>
+                    </div>
+                    <div class="geo-refresh-row">
+                        <button class="btn-ghost" onclick="fetchGeoIP()">Refresh</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Server Selection -->
+            <div class="card">
+                <div class="sec-hdr">
+                    <span class="sec-title">Server Selection</span>
+                    <div class="auto-row" style="gap:8px;">
+                        <span class="sec-meta auto-lbl" id="srv-mode-lbl">Auto</span>
+                        <button class="sec-btn" onclick="selectAuto()">Reset</button>
+                    </div>
+                </div>
+                <div class="srv-body">
+                    <button class="btn-ghost" id="srv-fetch-btn" onclick="fetchServers()">Fetch Nearby Servers</button>
+                    <div class="srv-scroll" id="srv-list">
+                        <div class="srv-empty">Click to load nearby servers</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Connection Info -->
+            <div class="card">
+                <div class="sec-hdr">
+                    <span class="sec-title">Connection</span>
+                    <span class="sec-meta" id="conn-badge">—</span>
+                </div>
+                <div class="conn-body">
+                    <div class="conn-row">
+                        <span class="conn-key">Public IP</span>
+                        <span class="conn-val" id="conn-ip">—</span>
+                    </div>
+                    <div class="conn-row">
+                        <span class="conn-key">Server</span>
+                        <span class="conn-val" id="conn-server">—</span>
+                    </div>
+                    <div class="conn-row">
+                        <span class="conn-key">Sponsor</span>
+                        <span class="conn-val" id="conn-sponsor">—</span>
+                    </div>
+                    <div class="conn-row">
+                        <span class="conn-key">Distance</span>
+                        <span class="conn-val" id="conn-dist">—</span>
+                    </div>
+                    <div class="conn-row">
+                        <span class="conn-key">Host</span>
+                        <span class="conn-val" id="conn-host">—</span>
+                    </div>
+                    <div class="conn-row">
+                        <span class="conn-key">Coords</span>
+                        <span class="conn-val" id="conn-coords">—</span>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- ══ Bottom grid — Chart + History ══ -->
+        <div class="bottom-grid">
+
+            <!-- Chart -->
+            <div class="card">
+                <div class="sec-hdr">
+                    <span class="sec-title">Results Chart</span>
+                    <span class="sec-meta" id="chart-badge">No data</span>
+                </div>
+                <div class="chart-body">
+                    <div class="tab-row">
+                        <button class="tab active" onclick="switchTab('bar',event)">Bar</button>
+                        <button class="tab" onclick="switchTab('line',event)">Trend</button>
+                    </div>
+                    <div class="chart-empty" id="chart-empty">Run a test to see chart</div>
+                    <div class="chart-wrap" id="chart-wrap" style="display:none;">
+                        <canvas id="myChart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- History -->
+            <div class="card">
+                <div class="sec-hdr">
+                    <span class="sec-title">History</span>
+                    <button class="sec-btn" onclick="clearHistory()">Clear</button>
+                </div>
+                <div class="hist-scroll" id="hist-scroll">
+                    <div class="hist-empty">No tests recorded</div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+        /* ══════════════════════════════════════════════════════
+           SPEEDOMETER
+        ══════════════════════════════════════════════════════ */
+        const C = document.getElementById("speedo"), ctx = C.getContext("2d");
+        const W = C.width, H = C.height, CX = W / 2, CY = H / 2, MAX = 200;
+        const R_OUT = 120, R_IN = 97, R_T = 90, R_L = 77, R_G1 = 92, R_G2 = 80;
+        const SEG = 120, GAP = 0.018;
+        const A0 = (210 * Math.PI) / 180, AR = (300 * Math.PI) / 180;
+        const vA = v => A0 + (Math.min(Math.max(v, 0), MAX) / MAX) * AR;
+
+        function sCol(i, n, lit) {
+            const t = i / n; let r, g, b;
+            if (t < 0.33) { const p = t / 0.33; r = Math.round(248 + (34 - 248) * p); g = Math.round(113 + (211 - 113) * p); b = Math.round(113 + (238 - 113) * p); }
+            else if (t < 0.66) { const p = (t - 0.33) / 0.33; r = Math.round(34 + (129 - 34) * p); g = Math.round(211 + (140 - 211) * p); b = Math.round(238 + (248 - 238) * p); }
+            else { const p = (t - 0.66) / 0.34; r = Math.round(129 + (52 - 129) * p); g = Math.round(140 + (211 - 140) * p); b = Math.round(248 + (153 - 248) * p); }
+            return `rgba(${r},${g},${b},${lit ? 0.9 : 0.07})`;
+        }
+        const SEGS = Array.from({ length: SEG }, (_, i) => ({ a0: A0 + (i / SEG) * AR, a1: A0 + (i / SEG) * AR + (AR / SEG) - GAP }));
+        const TICKS = [0, 50, 100, 150, 200].map(v => { const a = vA(v), ca = Math.cos(a), sa = Math.sin(a); return { v, ox: CX + R_T * ca, oy: CY + R_T * sa, ix: CX + (R_T - 9) * ca, iy: CY + (R_T - 9) * sa, lx: CX + R_L * ca, ly: CY + R_L * sa }; });
+
+        function draw(val) {
+            ctx.clearRect(0, 0, W, H);
+            const lit = Math.round((val / MAX) * SEG);
+            SEGS.forEach(({ a0, a1 }, i) => { ctx.beginPath(); ctx.arc(CX, CY, R_OUT, a0, a1); ctx.arc(CX, CY, R_IN, a1, a0, true); ctx.closePath(); ctx.fillStyle = sCol(i, SEG, i < lit); ctx.fill(); });
+            const f = ctx.createRadialGradient(CX, CY, 0, CX, CY, R_IN); f.addColorStop(0, "#141414"); f.addColorStop(1, "#0e0e0e");
+            ctx.beginPath(); ctx.arc(CX, CY, R_IN - 2, 0, Math.PI * 2); ctx.fillStyle = f; ctx.fill();
+            if (val > 1) {
+                const ga = vA(val);
+                ctx.save(); ctx.shadowBlur = 16; ctx.shadowColor = "#22d3ee"; ctx.beginPath(); ctx.arc(CX, CY, R_G1, A0, ga); ctx.strokeStyle = "#22d3ee18"; ctx.lineWidth = 2.5; ctx.stroke(); ctx.restore();
+                ctx.save(); ctx.shadowBlur = 8; ctx.shadowColor = "#818cf8"; ctx.beginPath(); ctx.arc(CX, CY, R_G2, A0, ga); ctx.strokeStyle = "#818cf815"; ctx.lineWidth = 1.5; ctx.stroke(); ctx.restore();
+            }
+            TICKS.forEach(({ ox, oy, ix, iy, lx, ly, v }) => { ctx.beginPath(); ctx.moveTo(ox, oy); ctx.lineTo(ix, iy); ctx.strokeStyle = "#2a2a2a"; ctx.lineWidth = 1.5; ctx.lineCap = "round"; ctx.stroke(); ctx.font = "600 8px Inter,Segoe UI,sans-serif"; ctx.fillStyle = "#3f3f46"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(v, lx, ly); });
+            const na = vA(val), nt = R_IN - 7, ntl = 18, p2 = na + Math.PI / 2;
+            const tx = CX + nt * Math.cos(na), ty = CY + nt * Math.sin(na), bx = CX - ntl * Math.cos(na), by = CY - ntl * Math.sin(na);
+            const p1x = CX + 4 * Math.cos(p2), p1y = CY + 4 * Math.sin(p2), p2x = CX - 4 * Math.cos(p2), p2y = CY - 4 * Math.sin(p2);
+            ctx.save(); ctx.shadowBlur = 14; ctx.shadowColor = "#22d3ee"; ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(p1x, p1y); ctx.lineTo(bx, by); ctx.lineTo(p2x, p2y); ctx.closePath();
+            const ng = ctx.createLinearGradient(bx, by, tx, ty); ng.addColorStop(0, "#111111"); ng.addColorStop(0.5, "#22d3ee"); ng.addColorStop(1, "#e0f9ff"); ctx.fillStyle = ng; ctx.fill(); ctx.restore();
+            const pg = ctx.createRadialGradient(CX, CY, 0, CX, CY, 12); pg.addColorStop(0, "#ffffff14"); pg.addColorStop(0.35, "#22d3ee"); pg.addColorStop(0.7, "#0c3a4a"); pg.addColorStop(1, "#0a0a0a");
+            ctx.beginPath(); ctx.arc(CX, CY, 12, 0, Math.PI * 2); ctx.fillStyle = pg; ctx.fill();
+            ctx.beginPath(); ctx.arc(CX, CY, 12, 0, Math.PI * 2); ctx.strokeStyle = "#22d3ee20"; ctx.lineWidth = 1; ctx.stroke();
+            ctx.beginPath(); ctx.arc(CX, CY, 2.5, 0, Math.PI * 2); ctx.fillStyle = "#22d3ee"; ctx.fill();
+            document.getElementById("dr-val").textContent = Math.round(val);
+        }
+
+        /* Needle physics */
+        const C2 = { k: .045, f: .78, wk: .032, wf: .82, wa: .14, wa2: .04, wn: .025, wq: .038, wr: .30, ev: .018, ep: .04 };
+        let pos = 0, vel = 0, tgt = 0, md = "idle", wc = 0, wcl = 0, ph = 0, raf = null;
+        function tick() {
+            if (md === "wobble") { if (wc < wcl) wc = Math.min(wc + C2.wr, wcl); ph += C2.wq; const o = Math.sin(ph) * wc * C2.wa + Math.sin(ph * 2.3) * wc * C2.wa2 + (Math.random() - .5) * wc * C2.wn; vel += (Math.max(0, wc + o) - pos) * C2.wk; vel *= C2.wf; }
+            else { vel += (tgt - pos) * C2.k; vel *= C2.f; if (Math.abs(vel) < C2.ev && Math.abs(tgt - pos) < C2.ep) { pos = tgt; vel = 0; draw(pos); raf = null; return; } }
+            pos = Math.max(0, pos + vel); draw(pos); raf = requestAnimationFrame(tick);
+        }
+        const loop = () => { if (!raf) raf = requestAnimationFrame(tick); };
+        const nSet = (v) => { md = "spring"; tgt = Math.min(v, MAX); loop(); };
+        const nWob = (c) => { md = "wobble"; wcl = Math.min(c, MAX); wc = pos; ph = 0; vel *= 0.4; loop(); };
+        const nRst = () => { md = "spring"; tgt = 0; loop(); };
+        draw(0);
+
+        /* ══ Loading bars ══ */
+        let lbInt = null;
+        function showLB(t) {
+            const row = document.getElementById(`lb-${t}`), fill = document.getElementById(`lb-${t}-fill`), pct = document.getElementById(`lb-${t}-pct`);
+            row.classList.remove("hidden"); fill.style.width = "0%"; pct.textContent = "0%"; pct.className = "lb-pct active";
+            let p = 0; clearInterval(lbInt);
+            lbInt = setInterval(() => { const s = Math.max(0.3, (92 - p) * 0.025); p = Math.min(p + s, 92); fill.style.width = p + "%"; pct.textContent = Math.round(p) + "%"; if (p >= 92) clearInterval(lbInt); }, 80);
+        }
+        function doneLB(t) {
+            clearInterval(lbInt);
+            const fill = document.getElementById(`lb-${t}-fill`), pct = document.getElementById(`lb-${t}-pct`);
+            fill.style.transition = "width .5s ease"; fill.style.width = "100%"; pct.textContent = "100%"; pct.className = "lb-pct";
+            setTimeout(() => { document.getElementById(`lb-${t}`).classList.add("hidden"); fill.style.transition = ""; fill.style.width = "0%"; }, 900);
+        }
+        function hideAllLB() {
+            clearInterval(lbInt);
+            ["dl", "ul"].forEach(t => { document.getElementById(`lb-${t}`).classList.add("hidden"); document.getElementById(`lb-${t}-fill`).style.width = "0%"; document.getElementById(`lb-${t}-pct`).textContent = "0%"; });
+        }
+
+        /* ══ GeoIP ══ */
+        async function fetchGeoIP() {
+            const badge = document.getElementById("geo-badge"); badge.textContent = "Loading";
+            ["geo-isp", "geo-loc", "geo-country", "geo-tz", "geo-host"].forEach(id => { const el = document.getElementById(id); el.textContent = "—"; el.className = "geo-val loading"; });
+            try {
+                const res = await fetch("/get-geoip"), d = await res.json();
+                if (d.error) throw new Error(d.error);
+                const isp = d.isp.replace(/^AS\d+\s+/, "");
+                function set(id, v) { const el = document.getElementById(id); el.textContent = v || "—"; el.className = "geo-val"; }
+                set("geo-isp", isp); set("geo-loc", d.city); set("geo-country", `${d.country} — ${d.region}`); set("geo-tz", d.timezone); set("geo-host", d.hostname !== "N/A" ? d.hostname : d.ip);
+                badge.textContent = "Live";
+                document.getElementById("conn-ip").textContent = d.ip || "—";
+                document.getElementById("conn-ip").classList.add("hi");
+                const chip = document.getElementById("ip-chip"); chip.textContent = d.ip; chip.className = "chip live";
+            } catch {
+                badge.textContent = "Error";
+                ["geo-isp", "geo-loc", "geo-country", "geo-tz", "geo-host"].forEach(id => { const el = document.getElementById(id); el.textContent = "Unavailable"; });
+            }
+        }
+
+        /* ══ Server selection ══ */
+        let selSrvId = null;
+
+        function selectAuto() {
+            selSrvId = null;
+            document.querySelectorAll(".srv-row").forEach(e => e.classList.remove("active"));
+            document.getElementById("srv-mode-lbl").textContent = "Auto";
+            const dd = document.getElementById("srv-dropdown"); dd.value = "";
+        }
+
+        async function fetchServers() {
+            const btn = document.getElementById("srv-fetch-btn"), list = document.getElementById("srv-list");
+            const dd = document.getElementById("srv-dropdown");
+            btn.disabled = true; btn.textContent = "Loading…";
+            list.innerHTML = `<div class="srv-empty"><span class="spin"></span> Fetching…</div>`;
+            try {
+                const res = await fetch("/get-servers"), d = await res.json();
+                if (d.error) throw new Error(d.error);
+                const srvs = d.servers;
+                /* populate panel list */
+                list.innerHTML = srvs.map(s => `
+      <div class="srv-row ${selSrvId == s.id ? 'active' : ''}" onclick="pickSrv('${s.id}','${esc(s.name)}','${esc(s.country)}',this)">
+        <div class="srv-radio"></div>
+        <div class="srv-info">
+          <div class="srv-name">${esc(s.name)}, ${esc(s.country)}</div>
+          <div class="srv-sponsor">${esc(s.sponsor)}</div>
+        </div>
+        <div class="srv-km">${s.distance} km</div>
+      </div>`).join("");
+                /* populate inline dropdown */
+                dd.innerHTML = `<option value="">Auto — Best Server</option>` + srvs.map(s => `<option value="${s.id}">${s.name}, ${s.country} (${s.distance} km)</option>`).join("");
+            } catch (e) { list.innerHTML = `<div class="srv-empty">${e.message}</div>`; }
+            finally { btn.disabled = false; btn.textContent = "Fetch Nearby Servers"; }
+        }
+
+        function pickSrv(id, name, country, el) {
+            selSrvId = id;
+            document.querySelectorAll(".srv-row").forEach(e => e.classList.remove("active"));
+            el.classList.add("active");
+            document.getElementById("srv-mode-lbl").textContent = `${name}, ${country}`;
+            document.getElementById("srv-dropdown").value = id;
+        }
+
+        /* Sync dropdown change → panel selection */
+        document.getElementById("srv-dropdown").addEventListener("change", function () {
+            selSrvId = this.value || null;
+            document.querySelectorAll(".srv-row").forEach(e => e.classList.remove("active"));
+            if (selSrvId) {
+                const match = [...document.querySelectorAll(".srv-row")].find(e => e.onclick && e.getAttribute("onclick") && e.getAttribute("onclick").includes(`'${selSrvId}'`));
+                if (match) match.classList.add("active");
+                document.getElementById("srv-mode-lbl").textContent = this.options[this.selectedIndex].text;
+            } else { document.getElementById("srv-mode-lbl").textContent = "Auto"; }
+        });
+
+        function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
+
+        /* ══ Public IP ══ */
+        (async function () {
+            try {
+                const res = await fetch("/get-ip"), d = await res.json();
+                const chip = document.getElementById("ip-chip");
+                if (d.ip && d.ip !== "Unavailable") { chip.textContent = d.ip; chip.className = "chip live"; }
+                else { chip.textContent = "Unavailable"; chip.className = "chip error"; }
+            } catch { document.getElementById("ip-chip").textContent = "Unavailable"; }
+        })();
+
+        /* ══ Chart ══ */
+        let chartInst = null, curTab = "bar";
+        function switchTab(tab, e) {
+            curTab = tab;
+            document.querySelectorAll(".tab").forEach(b => b.classList.remove("active"));
+            e.target.classList.add("active"); renderChart();
+        }
+        function renderChart() {
+            const h = loadHist();
+            const empty = document.getElementById("chart-empty"), wrap = document.getElementById("chart-wrap"), canvas = document.getElementById("myChart"), badge = document.getElementById("chart-badge");
+            if (!h.length) { empty.style.display = "flex"; wrap.style.display = "none"; badge.textContent = "No data"; if (chartInst) { chartInst.destroy(); chartInst = null; } return; }
+            empty.style.display = "none"; wrap.style.display = "block"; badge.textContent = `${h.length} run${h.length > 1 ? "s" : ""}`;
+            const labels = h.map((_, i) => `#${i + 1}`);
+            const opts = {
+                responsive: true, maintainAspectRatio: false, animation: { duration: 400 },
+                plugins: {
+                    legend: { position: "bottom", labels: { color: "#52525b", font: { size: 10, family: "Inter,Segoe UI,sans-serif" }, boxWidth: 8, padding: 12 } },
+                    tooltip: { backgroundColor: "#111111", borderColor: "#222222", borderWidth: 1, titleColor: "#71717a", bodyColor: "#e4e4e7", padding: 10, titleFont: { size: 10 }, bodyFont: { size: 11, weight: "bold" } }
+                },
+                scales: {
+                    x: { ticks: { color: "#3f3f46", font: { size: 9 } }, grid: { color: "#1c1c1c" }, border: { color: "#222222" } },
+                    y: { ticks: { color: "#3f3f46", font: { size: 9 } }, grid: { color: "#1c1c1c" }, border: { color: "#222222" }, beginAtZero: true }
+                }
+            };
+            const dl = h.map(r => r.download), ul = h.map(r => r.upload), pg = h.map(r => r.ping);
+            let ds;
+            if (curTab === "bar") {
+                ds = [
+                    { label: "Download", data: dl, backgroundColor: "#22d3ee18", borderColor: "#22d3ee", borderWidth: 1.5, borderRadius: 4 },
+                    { label: "Upload", data: ul, backgroundColor: "#818cf818", borderColor: "#818cf8", borderWidth: 1.5, borderRadius: 4 },
+                    { label: "Ping", data: pg, backgroundColor: "#34d39918", borderColor: "#34d399", borderWidth: 1.5, borderRadius: 4 }];
+            } else {
+                ds = [
+                    { label: "Download", data: dl, borderColor: "#22d3ee", backgroundColor: "#22d3ee0a", borderWidth: 1.5, pointBackgroundColor: "#22d3ee", pointRadius: 3, tension: 0.4, fill: true },
+                    { label: "Upload", data: ul, borderColor: "#818cf8", backgroundColor: "#818cf80a", borderWidth: 1.5, pointBackgroundColor: "#818cf8", pointRadius: 3, tension: 0.4, fill: true },
+                    { label: "Ping", data: pg, borderColor: "#34d399", backgroundColor: "#34d3990a", borderWidth: 1.5, pointBackgroundColor: "#34d399", pointRadius: 3, tension: 0.4, fill: true }];
+            }
+            if (chartInst) { chartInst.destroy(); chartInst = null; }
+            chartInst = new Chart(canvas, { type: curTab === "bar" ? "bar" : "line", data: { labels, datasets: ds }, options: opts });
+        }
+
+        /* ══ History ══ */
+        const SK = "netpulse_v2", MX = 10;
+        function loadHist() { try { return JSON.parse(localStorage.getItem(SK)) || []; } catch { return []; } }
+        function saveResult(r) { const h = loadHist(); h.push(r); if (h.length > MX) h.shift(); localStorage.setItem(SK, JSON.stringify(h)); }
+        function clearHistory() { localStorage.removeItem(SK); renderHist(); renderChart(); }
+        function rating(dl) { if (dl >= 100) return { t: "Excellent", c: "excellent" }; if (dl >= 50) return { t: "Good", c: "good" }; if (dl >= 20) return { t: "Fair", c: "fair" }; return { t: "Poor", c: "poor" }; }
+        function renderHist() {
+            const h = loadHist(), body = document.getElementById("hist-scroll");
+            if (!h.length) { body.innerHTML = `<div class="hist-empty">No tests recorded</div>`; return; }
+            body.innerHTML = h.slice().reverse().map((r, i) => {
+                const n = h.length - i; const rt = rating(r.download); return `
+    <div class="hist-item">
+      <span class="hist-index">${n}</span>
+      <div class="hist-bar"></div>
+      <div class="hist-content">
+        <div class="hist-time">${r.time}${r.server ? " · " + r.server : ""}</div>
+        <div class="hist-vals">
+          <span class="hv dl"><b>${r.download}</b> Mbps</span>
+          <span class="hv ul"><b>${r.upload}</b> Mbps</span>
+          <span class="hv pg"><b>${r.ping}</b> ms</span>
+        </div>
+      </div>
+      <span class="hist-badge ${rt.c}">${rt.t}</span>
+    </div>`;
+            }).join("");
+        }
+
+        /* ══ Speed Test SSE ══ */
+        const PROG = { server: 8, ping: 24, download: 62, upload: 88, complete: 100 };
+        function setBar(p) { document.getElementById("bar").style.width = p + "%"; document.getElementById("pct").textContent = p + "%"; }
+        function setStatus(html, raw = false) { const el = document.getElementById("status"); raw ? (el.innerHTML = html) : (el.textContent = html); }
+        function setStage(t, live = false) { const el = document.getElementById("dr-stage"); el.textContent = t; el.className = "dr-stage" + (live ? " live" : ""); }
+        function setSC(id, val, cls, badge) { document.getElementById(`sv-${id}`).textContent = val; document.getElementById(`sc-${id}`).className = `stat-card ${cls}`; document.getElementById(`sb-${id}`).textContent = badge; }
+        function setDot(a) { document.getElementById("dot").className = "status-dot" + (a ? " active" : ""); }
+
+        function resetUI() {
+            setSC("ping", "--", "", "—"); setSC("dl", "--", "", "—"); setSC("ul", "--", "", "—");
+            hideAllLB(); nRst(); setBar(0); setStatus("Ready"); setStage("Idle"); setDot(false);
+            document.getElementById("server-chip").textContent = "";
+        }
+
+        function startTest() {
+            const btn = document.getElementById("btn");
+            /* Check inline dropdown first, else panel selection */
+            const dd = document.getElementById("srv-dropdown");
+            if (dd.value) selSrvId = dd.value;
+            btn.disabled = true; btn.textContent = "Testing…";
+            resetUI(); setDot(true);
+            const url = selSrvId ? `/run-speedtest?server_id=${selSrvId}` : "/run-speedtest";
+            const es = new EventSource(url);
+            es.onmessage = ({ data }) => {
+                const d = JSON.parse(data);
+                if (PROG[d.stage]) setBar(PROG[d.stage]);
+                switch (d.stage) {
+                    case "server":
+                        setStage("Connecting", true); setStatus(`<span class="spin"></span>${d.status}`, true);
+                        if (d.server) {
+                            document.getElementById("server-chip").textContent = d.server; setStatus("Connected"); setStage("Server OK");
+                            document.getElementById("conn-server").textContent = d.server || "—";
+                            document.getElementById("conn-sponsor").textContent = d.sponsor || "—";
+                            document.getElementById("conn-host").textContent = d.host || "—";
+                            document.getElementById("conn-dist").textContent = d.distance ? d.distance + " km" : "—";
+                            document.getElementById("conn-badge").textContent = d.country || "";
+                            ["conn-server", "conn-sponsor", "conn-host", "conn-dist"].forEach(id => document.getElementById(id).classList.add("hi"));
+                        } break;
+                    case "ping":
+                        setSC("ping", "…", "active", "Testing"); setStage("Ping", true); setStatus(`<span class="spin"></span>Measuring ping…`, true);
+                        if (d.value != null) { setSC("ping", d.value, "done", "Done"); setStatus(`Ping: ${d.value} ms`); setStage(`${d.value} ms`); }
+                        break;
+                    case "download":
+                        setSC("dl", "…", "active", "Testing"); setStage("Download", true); setStatus(`<span class="spin"></span>Testing download…`, true);
+                        showLB("dl"); nWob(90);
+                        if (d.value != null) { doneLB("dl"); nSet(d.value); setSC("dl", d.value, "done", "Done"); setStatus(`Download: ${d.value} Mbps`); setStage(`${d.value} Mbps`); }
+                        break;
+                    case "upload":
+                        setSC("ul", "…", "active", "Testing"); setStage("Upload", true); setStatus(`<span class="spin"></span>Testing upload…`, true);
+                        showLB("ul"); nWob(42);
+                        if (d.value != null) { doneLB("ul"); nSet(d.value); setSC("ul", d.value, "done", "Done"); setStatus(`Upload: ${d.value} Mbps`); setStage(`${d.value} Mbps`); }
+                        break;
+                    case "complete":
+                        hideAllLB(); setStage("Complete"); setStatus(`Done — ${d.download} Mbps down, ${d.upload} Mbps up, ${d.ping} ms`);
+                        setDot(false); btn.disabled = false; btn.textContent = "Run Again"; es.close();
+                        const now = new Date();
+                        const ts = now.toLocaleDateString("en-IN", { day: "2-digit", month: "short" }) + " " + now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+                        const srv = document.getElementById("conn-server").textContent;
+                        saveResult({ download: d.download, upload: d.upload, ping: d.ping, time: ts, server: srv !== "—" ? srv : "" });
+                        renderHist(); renderChart();
+                        break;
+                    case "error":
+                        hideAllLB(); nRst(); setStage("Error"); setStatus(d.message); setDot(false); btn.disabled = false; btn.textContent = "Start Test"; es.close(); break;
+                }
+            };
+            es.onerror = () => { hideAllLB(); nRst(); setDot(false); setStatus("Connection error — check Flask on port 8080"); setStage("Error"); btn.disabled = false; btn.textContent = "Start Test"; es.close(); };
+        }
+
+        /* Init */
+        renderHist();
+        renderChart();
+        fetchGeoIP();
+    </script>
+</body>
+
+</html>
