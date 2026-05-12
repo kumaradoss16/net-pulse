@@ -7,7 +7,7 @@ import datetime
 import urllib.request
 
 from flask import Flask, render_template, Response, jsonify, request
-from flask_socketio import SocketIO, emit   # ← correct import
+from flask_socketio import SocketIO, emit
 import speedtest
 import psutil
 
@@ -30,6 +30,14 @@ connected_clients = {}
 # Helpers
 # ═══════════════════════════════════════════════════════════
 
+def sanitize_server(server):
+    """Strip leading/trailing whitespace from all string fields."""
+    return {
+        k: v.strip() if isinstance(v, str) else v
+        for k, v in server.items()
+    }
+
+
 def get_public_ip():
     services = [
         "https://api.ipify.org?format=json",
@@ -50,9 +58,19 @@ def get_public_ip():
 
 def get_speedtest_instance():
     try:
-        return speedtest.Speedtest(secure=True)
+        st = speedtest.Speedtest(secure=True)
     except Exception:
-        return speedtest.Speedtest()
+        st = speedtest.Speedtest()
+
+    # Sanitize ALL server entries at instance level — prevents
+    # "URL can't contain control characters" from whitespace in host fields
+    for dist_list in st.servers.values():
+        for s in dist_list:
+            for key in s:
+                if isinstance(s[key], str):
+                    s[key] = s[key].strip()
+
+    return st
 
 
 def get_system_stats():
@@ -149,20 +167,19 @@ def ws_speedtest(data):
             if server_id:
                 st.get_servers([int(server_id)])
             st.get_best_server()
+            st.results.server = sanitize_server(st.results.server)  # ← sanitize
 
             server       = st.results.server
-            server_name  = server.get("name", "Unknown")
-            server_cntry = server.get("country", "")
-            server_label = f"{server_name}, {server_cntry}"
+            server_label = f"{server.get('name','Unknown')}, {server.get('country','')}"
 
             push({
                 "stage":    "server",
                 "status":   "Connected",
                 "server":   server_label,
                 "sponsor":  server.get("sponsor", ""),
-                "host":     server.get("host", ""),
+                "host":     server.get("host",    ""),
                 "distance": round(server.get("d", 0), 1),
-                "country":  server_cntry,
+                "country":  server.get("country", ""),
             })
             time.sleep(0.2)
 
@@ -183,7 +200,8 @@ def ws_speedtest(data):
             push({"stage": "complete", "ping": ping, "download": download, "upload": upload})
 
         except Exception as e:
-            push({"stage": "error", "message": str(e)})
+            clean_msg = str(e).replace('\t', '').replace('\n', '').strip()
+            push({"stage": "error", "message": clean_msg})
 
     socketio.start_background_task(run)
 
@@ -230,14 +248,14 @@ def get_servers():
         for dist_list in st.servers.values():
             for s in dist_list:
                 flat.append({
-                    "id":       s.get("id",      ""),
-                    "name":     s.get("name",    ""),
-                    "country":  s.get("country", ""),
-                    "sponsor":  s.get("sponsor", ""),
+                    "id":       str(s.get("id",      "")).strip(),
+                    "name":     str(s.get("name",    "")).strip(),
+                    "country":  str(s.get("country", "")).strip(),
+                    "sponsor":  str(s.get("sponsor", "")).strip(),
                     "distance": round(s.get("d", 0), 1),
-                    "host":     s.get("host",    ""),
-                    "lat":      s.get("lat",     ""),
-                    "lon":      s.get("lon",     ""),
+                    "host":     str(s.get("host",    "")).strip(),
+                    "lat":      str(s.get("lat",     "")).strip(),
+                    "lon":      str(s.get("lon",     "")).strip(),
                 })
         flat.sort(key=lambda x: x["distance"])
         return jsonify({"servers": flat[:10]})
@@ -246,7 +264,7 @@ def get_servers():
 
 
 @app.route("/run-speedtest")
-def run_speedtest():
+def run_speedtest_sse():
     server_id = request.args.get("server_id", None)
 
     def generate():
@@ -254,24 +272,17 @@ def run_speedtest():
             yield f"data: {json.dumps({'stage': 'server', 'status': 'Connecting to server…'})}\n\n"
 
             st = get_speedtest_instance()
+
             if server_id:
                 st.get_servers([int(server_id)])
+
             st.get_best_server()
+            st.results.server = sanitize_server(st.results.server)  # ← sanitize
 
             server       = st.results.server
-            server_name  = server.get("name", "Unknown")
-            server_cntry = server.get("country", "")
-            server_label = f"{server_name}, {server_cntry}"
-            server_info  = {
-                "stage":    "server",
-                "status":   "Connected",
-                "server":   server_label,
-                "sponsor":  server.get("sponsor", ""),
-                "host":     server.get("host", ""),
-                "distance": round(server.get("d", 0), 1),
-                "country":  server_cntry,
-            }
-            yield f"data: {json.dumps(server_info)}\n\n"
+            server_label = f"{server.get('name','Unknown')}, {server.get('country','')}"
+
+            yield f"data: {json.dumps({'stage': 'server', 'status': 'Connected', 'server': server_label, 'sponsor': server.get('sponsor',''), 'host': server.get('host',''), 'distance': round(server.get('d',0),1), 'country': server.get('country','')})}\n\n"
             time.sleep(0.3)
 
             yield f"data: {json.dumps({'stage': 'ping', 'status': 'Measuring ping…'})}\n\n"
@@ -291,15 +302,16 @@ def run_speedtest():
             yield f"data: {json.dumps({'stage': 'complete', 'ping': ping, 'download': download, 'upload': upload})}\n\n"
 
         except speedtest.ConfigRetrievalError as e:
-            yield f"data: {json.dumps({'stage': 'error', 'message': f'Config error: {str(e)}'})}\n\n"
+            yield f"data: {json.dumps({'stage': 'error', 'message': f'Config error: {str(e).strip()}'})}\n\n"
         except speedtest.NoMatchedServers:
-            yield f"data: {json.dumps({'stage': 'error', 'message': 'No servers matched.'})}\n\n"
+            yield f"data: {json.dumps({'stage': 'error', 'message': 'No servers matched. Check firewall or retry.'})}\n\n"
         except speedtest.SpeedtestBestServerFailure:
-            yield f"data: {json.dumps({'stage': 'error', 'message': 'Best server lookup failed.'})}\n\n"
+            yield f"data: {json.dumps({'stage': 'error', 'message': 'Best server lookup failed. Retry.'})}\n\n"
         except ssl.SSLError as e:
-            yield f"data: {json.dumps({'stage': 'error', 'message': f'SSL error: {str(e)}'})}\n\n"
+            yield f"data: {json.dumps({'stage': 'error', 'message': f'SSL error: {str(e).strip()}'})}\n\n"
         except Exception as e:
-            yield f"data: {json.dumps({'stage': 'error', 'message': str(e)})}\n\n"
+            clean_msg = str(e).replace('\t', '').replace('\n', '').strip()
+            yield f"data: {json.dumps({'stage': 'error', 'message': clean_msg})}\n\n"
 
     return Response(
         generate(),
