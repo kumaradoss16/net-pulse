@@ -8,6 +8,14 @@ import socketio
 import os
 
 app = Flask(__name__)
+# Change this line at the top
+socketio = SocketIO(
+    app,
+    cors_allowed_origins="*",
+    async_mode="threading",     # no eventlet/gevent needed — works on all Python versions
+    logger=False,
+    engineio_logger=False,
+)
 
 # ── Helpers ──────────────────────────────────────────────
 
@@ -175,4 +183,4 @@ def run_speedtest():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
-    socketio.run(app, host="0.0.0.0", debug=False, port=port)
+    socketio.run(app, host="0.0.0.0", debug=False, port=port, allow_unsafe_werkzeug=True)
