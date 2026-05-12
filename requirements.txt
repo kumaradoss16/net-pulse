@@ -1,6 +1,5 @@
 flask
 flask-socketio
-eventlet
 speedtest-cli
 psutil
 certifi
