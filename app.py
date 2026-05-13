@@ -2,6 +2,7 @@ import os
 import ssl
 import json
 import time
+import math
 import threading
 import datetime
 import urllib.request
@@ -11,7 +12,6 @@ from flask_socketio import SocketIO, emit
 import speedtest
 import psutil
 
-# ── App setup ─────────────────────────────────────────────
 app = Flask(__name__)
 app.config["SECRET_KEY"] = "netpulse-secret-key"
 
@@ -23,19 +23,12 @@ socketio = SocketIO(
     engineio_logger=False,
 )
 
-# ── Connected WebSocket clients ────────────────────────────
 connected_clients = {}
 
-# ═══════════════════════════════════════════════════════════
-# Helpers
-# ═══════════════════════════════════════════════════════════
+# ── Helpers ────────────────────────────────────────────────
 
 def sanitize_server(server):
-    """Strip leading/trailing whitespace from all string fields."""
-    return {
-        k: v.strip() if isinstance(v, str) else v
-        for k, v in server.items()
-    }
+    return {k: v.strip() if isinstance(v, str) else v for k, v in server.items()}
 
 
 def get_public_ip():
@@ -61,16 +54,55 @@ def get_speedtest_instance():
         st = speedtest.Speedtest(secure=True)
     except Exception:
         st = speedtest.Speedtest()
-
-    # Sanitize ALL server entries at instance level — prevents
-    # "URL can't contain control characters" from whitespace in host fields
     for dist_list in st.servers.values():
         for s in dist_list:
             for key in s:
                 if isinstance(s[key], str):
                     s[key] = s[key].strip()
-
     return st
+
+
+def haversine(lat1, lon1, lat2, lon2):
+    """Distance in km between two lat/lon points."""
+    R = 6371
+    d_lat = math.radians(lat2 - lat1)
+    d_lon = math.radians(lon2 - lon1)
+    a = (math.sin(d_lat / 2) ** 2 +
+         math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) *
+         math.sin(d_lon / 2) ** 2)
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def get_servers_near(user_lat, user_lon):
+    """
+    Fetch ALL speedtest.net servers and sort by distance from
+    the user's actual lat/lon — not the server machine's location.
+    """
+    st = get_speedtest_instance()
+    st.get_servers()   # loads full server list
+
+    results = []
+    for dist_list in st.servers.values():
+        for s in dist_list:
+            try:
+                slat = float(str(s.get("lat", "0")).strip())
+                slon = float(str(s.get("lon", "0")).strip())
+                dist = haversine(user_lat, user_lon, slat, slon)
+            except Exception:
+                dist = 9999
+            results.append({
+                "id":       str(s.get("id",      "")).strip(),
+                "name":     str(s.get("name",    "")).strip(),
+                "country":  str(s.get("country", "")).strip(),
+                "sponsor":  str(s.get("sponsor", "")).strip(),
+                "distance": round(dist, 1),
+                "host":     str(s.get("host",    "")).strip(),
+                "lat":      str(s.get("lat",     "")).strip(),
+                "lon":      str(s.get("lon",     "")).strip(),
+            })
+
+    results.sort(key=lambda x: x["distance"])
+    return results[:12]
 
 
 def get_system_stats():
@@ -85,12 +117,10 @@ def get_system_stats():
         "timestamp":    datetime.datetime.now().strftime("%H:%M:%S"),
     }
 
-# ═══════════════════════════════════════════════════════════
-# Background broadcaster — live stats every 2s to all clients
-# ═══════════════════════════════════════════════════════════
+
+# ── Background broadcaster ─────────────────────────────────
 _broadcast_thread = None
 _broadcast_lock   = threading.Lock()
-
 
 def broadcast_loop():
     prev_net = psutil.net_io_counters()
@@ -108,9 +138,8 @@ def broadcast_loop():
         stats["clients"]            = len(connected_clients)
         socketio.emit("live_stats", stats, namespace="/ws")
 
-# ═══════════════════════════════════════════════════════════
-# WebSocket events  (/ws namespace)
-# ═══════════════════════════════════════════════════════════
+
+# ── WebSocket events ───────────────────────────────────────
 
 @socketio.on("connect", namespace="/ws")
 def ws_connect():
@@ -167,7 +196,7 @@ def ws_speedtest(data):
             if server_id:
                 st.get_servers([int(server_id)])
             st.get_best_server()
-            st.results.server = sanitize_server(st.results.server)  # ← sanitize
+            st.results.server = sanitize_server(st.results.server)
 
             server       = st.results.server
             server_label = f"{server.get('name','Unknown')}, {server.get('country','')}"
@@ -205,9 +234,8 @@ def ws_speedtest(data):
 
     socketio.start_background_task(run)
 
-# ═══════════════════════════════════════════════════════════
-# HTTP Routes
-# ═══════════════════════════════════════════════════════════
+
+# ── HTTP Routes ────────────────────────────────────────────
 
 @app.route("/")
 def index():
@@ -240,30 +268,40 @@ def get_geoip():
 
 @app.route("/get-servers")
 def get_servers():
+    """
+    Now accepts ?lat=XX&lon=YY from the browser (user's real location via ipinfo.io).
+    Falls back to server location if not provided.
+    """
     try:
-        st = get_speedtest_instance()
-        st.get_servers()
-        st.get_best_server()
-        flat = []
-        for dist_list in st.servers.values():
-            for s in dist_list:
-                flat.append({
-                    "id":       str(s.get("id",      "")).strip(),
-                    "name":     str(s.get("name",    "")).strip(),
-                    "country":  str(s.get("country", "")).strip(),
-                    "sponsor":  str(s.get("sponsor", "")).strip(),
-                    "distance": round(s.get("d", 0), 1),
-                    "host":     str(s.get("host",    "")).strip(),
-                    "lat":      str(s.get("lat",     "")).strip(),
-                    "lon":      str(s.get("lon",     "")).strip(),
-                })
-        flat.sort(key=lambda x: x["distance"])
-        return jsonify({"servers": flat[:10]})
+        lat_param = request.args.get("lat")
+        lon_param = request.args.get("lon")
+
+        if lat_param and lon_param:
+            # ✅ Use USER's real lat/lon to find nearby servers
+            user_lat = float(lat_param)
+            user_lon = float(lon_param)
+        else:
+            # Fallback: use server location (old behaviour)
+            try:
+                with urllib.request.urlopen("https://ipinfo.io/json", timeout=5) as res:
+                    geoip = json.loads(res.read().decode())
+                loc = geoip.get("loc", "0,0").split(",")
+                user_lat, user_lon = float(loc[0]), float(loc[1])
+            except Exception:
+                user_lat, user_lon = 0.0, 0.0
+
+        servers = get_servers_near(user_lat, user_lon)
+        return jsonify({"servers": servers})
+
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+limiter = Limiter(get_remote_address, app=app, default_limits=["5 per minute"])
 
 @app.route("/run-speedtest")
+@limiter.limit("3 per minute")
 def run_speedtest_sse():
     server_id = request.args.get("server_id", None)
 
@@ -277,7 +315,7 @@ def run_speedtest_sse():
                 st.get_servers([int(server_id)])
 
             st.get_best_server()
-            st.results.server = sanitize_server(st.results.server)  # ← sanitize
+            st.results.server = sanitize_server(st.results.server)
 
             server       = st.results.server
             server_label = f"{server.get('name','Unknown')}, {server.get('country','')}"
@@ -323,9 +361,6 @@ def run_speedtest_sse():
         }
     )
 
-# ═══════════════════════════════════════════════════════════
-# Entry point
-# ═══════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
