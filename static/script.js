@@ -134,7 +134,15 @@ async function fetchGeoIP() {
     const badge = document.getElementById("geo-badge"); badge.textContent = "Loading";
     ["geo-isp", "geo-loc", "geo-country", "geo-tz", "geo-host"].forEach(id => { const el = document.getElementById(id); el.textContent = "—"; el.className = "geo-val loading"; });
     try {
-        const res = await fetch("/get-geoip"), d = await res.json();
+        // Call ipinfo.io directly from BROWSER — returns USER's real location, not Render's
+        const res = await fetch("https://ipinfo.io/json"), d = await res.json();
+        
+        // Cache lat/lon for fetchServers()
+        if (d.loc) {
+            const parts = d.loc.split(",");
+            _userLat = parseFloat(parts[0]);
+            _userLon = parseFloat(parts[1]);
+        }
         if (d.error) throw new Error(d.error);
         const isp = d.isp.replace(/^AS\d+\s+/, "");
         function set(id, v) { const el = document.getElementById(id); el.textContent = v || "—"; el.className = "geo-val"; }
@@ -151,6 +159,8 @@ async function fetchGeoIP() {
 
 /* ══ Server selection ══ */
 let selSrvId = null;
+// Cache user's real lat/lon from browser — reused in fetchServers()
+let _userLat = null, _userLon = null;
 
 function selectAuto() {
     selSrvId = null;
@@ -165,7 +175,27 @@ async function fetchServers() {
     btn.disabled = true; btn.textContent = "Loading…";
     list.innerHTML = `<div class="srv-empty"><span class="spin"></span> Fetching…</div>`;
     try {
-        const res = await fetch("/get-servers"), d = await res.json();
+        // Step 1: Get user's real coords — use cached value or re-fetch
+        let lat = _userLat, lon = _userLon;
+        if (lat === null || lon === null) {
+            try {
+                const geoRes  = await fetch("https://ipinfo.io/json");
+                const geoData = await geoRes.json();
+                if (geoData.loc) {
+                    const parts = geoData.loc.split(",");
+                    lat = parseFloat(parts[0]);
+                    lon = parseFloat(parts[1]);
+                    _userLat = lat; _userLon = lon;
+                }
+            } catch {}
+        }
+        
+        // Step 2: Pass USER's lat/lon to Flask — sorts servers near user, not Render datacenter
+        const url = (lat !== null && lon !== null)
+            ? `/get-servers?lat=${lat}&lon=${lon}`
+            : `/get-servers`;
+        
+        const res = await fetch(url), d = await res.json();
         if (d.error) throw new Error(d.error);
         const srvs = d.servers;
         /* populate panel list */
