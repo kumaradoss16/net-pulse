@@ -3,9 +3,9 @@ services:
     name: net-pulse
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn --worker-class eventlet -w 1 --timeout 120 app:app
+    startCommand: gunicorn --worker-class eventlet -w 1 --timeout 120 --bind 0.0.0.0:$PORT app:app
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
-      - key: PORT
-        value: 8080
+      - key: SECRET_KEY
+        generateValue: true
