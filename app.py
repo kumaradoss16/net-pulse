@@ -13,12 +13,12 @@ import speedtest
 import psutil
 
 app = Flask(__name__)
-app.config["SECRET_KEY"] = "netpulse-secret-key"
+app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "netpulse-dev-key")
 
 socketio = SocketIO(
     app,
     cors_allowed_origins="*",
-    async_mode="threading",
+    async_mode="eventlet",
     logger=False,
     engineio_logger=False,
 )
@@ -363,5 +363,7 @@ def run_speedtest_sse():
 
 
 if __name__ == "__main__":
+    import eventlet
+    import eventlet.wsgi
     port = int(os.environ.get("PORT", 8080))
-    socketio.run(app, host="0.0.0.0", debug=False, port=port, allow_unsafe_werkzeug=True)
+    eventlet.wsgi.server(eventlet.listen(("0.0.0.0", port)), app)
