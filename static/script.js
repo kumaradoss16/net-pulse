@@ -238,7 +238,16 @@ function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").
 /* ══ Public IP ══ */
 (async function () {
     try {
-        const res = await fetch("/get-ip"), d = await res.json();
+        // AFTER — call ipinfo.io directly from browser → returns USER's location, not Render's
+        const res = await fetch("https://ipinfo.io/json");
+        const d = await res.json();
+        
+        // Cache coordinates for fetchServers()
+        if (d.loc) {
+            const parts = d.loc.split(",");
+            _userLat = parseFloat(parts[0]);
+            _userLon = parseFloat(parts[1]);
+        }
         const chip = document.getElementById("ip-chip");
         if (d.ip && d.ip !== "Unavailable") { chip.textContent = d.ip; chip.className = "chip live"; }
         else { chip.textContent = "Unavailable"; chip.className = "chip error"; }
