@@ -149,97 +149,155 @@ async function fetchGeoIP() {
     }
 }
 
-/* ══ Server selection ══ */
+/* ══ Server selection (auto — no UI selector) ══ */
 let selSrvId = null;
 
-function selectAuto() {
-    selSrvId = null;
-    document.querySelectorAll(".srv-row").forEach(e => e.classList.remove("active"));
-    document.getElementById("srv-mode-lbl").textContent = "Auto";
-    const dd = document.getElementById("srv-dropdown"); dd.value = "";
-}
+/* ══════════════════════════════════════════════════════
+   WiFi vs Wired Detector + Signal Quality
+══════════════════════════════════════════════════════ */
 
-async function fetchServers() {
-  const btn = document.getElementById("srv-fetch-btn");
-  const list = document.getElementById("srv-list");
-  const dd   = document.getElementById("srv-dropdown");
+function detectConnectionQuality() {
+    const nc = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
 
-  if (btn) { btn.disabled = true; btn.textContent = "Loading…"; }
-  if (list) list.innerHTML = '<div class="srv-empty"><span class="spin"></span> Fetching nearby servers…</div>';
+    // --- DOM refs ---
+    const badge       = document.getElementById("conn-type-badge");
+    const typeName    = document.getElementById("conn-type-name");
+    const typeSub     = document.getElementById("conn-type-sub");
+    const typeIco     = document.getElementById("conn-type-ico");
+    const ringFg      = document.getElementById("ring-fg");
+    const ringLabel   = document.getElementById("ring-label");
+    const sigEtype    = document.getElementById("sig-etype");
+    const sigDownlink = document.getElementById("sig-downlink");
+    const sigRtt      = document.getElementById("sig-rtt");
+    const sigSavedata = document.getElementById("sig-savedata");
+    const qualFill    = document.getElementById("sig-quality-fill");
+    const qualPct     = document.getElementById("sig-quality-pct");
+    const qualDesc    = document.getElementById("sig-quality-desc");
 
-  try {
-    // ✅ Step 1: Get USER's real location from ipinfo.io (runs in browser)
-    let lat = "", lon = "";
-    try {
-      const geoRes  = await fetch("https://ipinfo.io/json");
-      const geoData = await geoRes.json();
-      if (geoData.loc) {
-        const parts = geoData.loc.split(",");
-        lat = parts[0];
-        lon = parts[1];
-      }
-    } catch {}
-
-    // ✅ Step 2: Pass lat/lon to Flask — it finds servers near the USER
-    const url = lat && lon
-      ? `/get-servers?lat=${lat}&lon=${lon}`
-      : `/get-servers`;
-
-    const res  = await fetch(url);
-    const data = await res.json();
-
-    if (data.error) throw new Error(data.error);
-
-    const srvs = data.servers;
-
-    // Populate panel list
-    if (list) {
-      list.innerHTML = srvs.map(s =>
-        `<div class="srv-row ${selSrvId == s.id ? 'active' : ''}"
-              onclick="pickSrv('${s.id}', '${esc(s.name)}', '${esc(s.country)}', this)">
-           <div class="srv-radio"></div>
-           <div class="srv-info">
-             <div class="srv-name">${esc(s.name)}, ${esc(s.country)}</div>
-             <div class="srv-sponsor">${esc(s.sponsor)}</div>
-           </div>
-           <div class="srv-km">${s.distance} km</div>
-         </div>`
-      ).join("");
+    if (!nc) {
+        badge.textContent     = "Unsupported";
+        typeName.textContent  = "API Unavailable";
+        typeSub.textContent   = "navigator.connection not supported in this browser";
+        typeIco.className     = "fas fa-question-circle";
+        sigEtype.textContent  = "N/A";
+        sigDownlink.textContent = "N/A";
+        sigRtt.textContent    = "N/A";
+        sigSavedata.textContent = "N/A";
+        qualDesc.textContent  = "Try Chrome or Edge for full Network Information API support.";
+        return;
     }
 
-    // Populate inline dropdown
-    if (dd) {
-      dd.innerHTML = `<option value="">Auto — Best Server</option>` +
-        srvs.map(s =>
-          `<option value="${s.id}">${esc(s.name)}, ${esc(s.country)} — ${s.distance} km</option>`
-        ).join("");
+    /* ── Connection type classification ── */
+    const type      = (nc.type         || "").toLowerCase();        // wifi / ethernet / cellular / none / other
+    const etype     = (nc.effectiveType || "").toLowerCase();       // slow-2g / 2g / 3g / 4g
+    const downlink  = nc.downlink  ?? null;   // Mbps hint (float)
+    const rtt       = nc.rtt       ?? null;   // ms
+    const saveData  = nc.saveData  ?? false;
+
+    /* Classify to a friendly type */
+    let connLabel, iconClass, colorClass, typeDetail;
+    if (type === "ethernet") {
+        connLabel  = "Wired (Ethernet)";
+        iconClass  = "fas fa-network-wired";
+        colorClass = "conn-wired";
+        typeDetail = "Stable, low-latency wired connection";
+    } else if (type === "wifi") {
+        connLabel  = "WiFi";
+        iconClass  = "fas fa-wifi";
+        colorClass = "conn-wifi";
+        typeDetail = "Wireless LAN connection";
+    } else if (type === "cellular") {
+        const cLabel = etype === "4g" ? "4G/LTE" : etype === "3g" ? "3G" : etype === "2g" ? "2G" : etype === "slow-2g" ? "Slow 2G" : "Cellular";
+        connLabel  = `Cellular (${cLabel})`;
+        iconClass  = "fas fa-signal";
+        colorClass = "conn-cellular";
+        typeDetail = "Mobile network connection";
+    } else if (type === "none") {
+        connLabel  = "Offline";
+        iconClass  = "fas fa-times-circle";
+        colorClass = "conn-offline";
+        typeDetail = "No network detected";
+    } else {
+        /* API supported but type not exposed — infer from etype */
+        if (etype === "4g") {
+            connLabel  = downlink > 50 ? "Wired / Fast WiFi" : "WiFi / 4G";
+            iconClass  = downlink > 50 ? "fas fa-network-wired" : "fas fa-wifi";
+            colorClass = "conn-wifi";
+            typeDetail = "High-speed connection detected";
+        } else {
+            connLabel  = "Unknown";
+            iconClass  = "fas fa-globe";
+            colorClass = "";
+            typeDetail = `Effective type: ${etype || "unknown"}`;
+        }
     }
 
-  } catch (e) {
-    if (list) list.innerHTML = `<div class="srv-empty">${e.message}</div>`;
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = "Fetch Nearby Servers"; }
-  }
-}
+    /* ── Signal quality score 0–100 ── */
+    let score = 0;
+    if (etype === "4g")      score += 50;
+    else if (etype === "3g") score += 30;
+    else if (etype === "2g") score += 15;
+    else if (etype === "slow-2g") score += 5;
+    else                     score += 50;   // unknown = assume decent
 
-function pickSrv(id, name, country, el) {
-    selSrvId = id;
-    document.querySelectorAll(".srv-row").forEach(e => e.classList.remove("active"));
-    el.classList.add("active");
-    document.getElementById("srv-mode-lbl").textContent = `${name}, ${country}`;
-    document.getElementById("srv-dropdown").value = id;
-}
+    if (downlink !== null) {
+        if      (downlink >= 100) score += 50;
+        else if (downlink >= 50)  score += 40;
+        else if (downlink >= 20)  score += 30;
+        else if (downlink >= 5)   score += 20;
+        else if (downlink >= 1)   score += 10;
+        else                      score +=  5;
+    } else { score += 25; }  // unknown → neutral
 
-/* Sync dropdown change → panel selection */
-document.getElementById("srv-dropdown").addEventListener("change", function () {
-    selSrvId = this.value || null;
-    document.querySelectorAll(".srv-row").forEach(e => e.classList.remove("active"));
-    if (selSrvId) {
-        const match = [...document.querySelectorAll(".srv-row")].find(e => e.onclick && e.getAttribute("onclick") && e.getAttribute("onclick").includes(`'${selSrvId}'`));
-        if (match) match.classList.add("active");
-        document.getElementById("srv-mode-lbl").textContent = this.options[this.selectedIndex].text;
-    } else { document.getElementById("srv-mode-lbl").textContent = "Auto"; }
-});
+    if (rtt !== null) {
+        if      (rtt <= 20)  score = Math.min(score, 100);
+        else if (rtt <= 50)  score = Math.min(score * 0.95, 100);
+        else if (rtt <= 100) score = Math.min(score * 0.85, 100);
+        else if (rtt <= 200) score *= 0.70;
+        else                 score *= 0.50;
+    }
+
+    if (saveData) score *= 0.75;
+    if (type === "none") score = 0;
+
+    score = Math.min(100, Math.round(score));
+
+    /* ── Quality label ── */
+    let qualLabel, qualDescText, qualFillColor;
+    if (score >= 80)      { qualLabel = "Excellent"; qualDescText = "Great connection — speed test should run smoothly.";          qualFillColor = "#22d3ee"; }
+    else if (score >= 60) { qualLabel = "Good";      qualDescText = "Solid connection — expect reliable results.";                qualFillColor = "#34d399"; }
+    else if (score >= 40) { qualLabel = "Fair";      qualDescText = "Moderate connection — results may vary slightly.";           qualFillColor = "#fbbf24"; }
+    else if (score >= 20) { qualLabel = "Poor";      qualDescText = "Weak signal — speed test results may be inconsistent.";     qualFillColor = "#f87171"; }
+    else                  { qualLabel = "Critical";  qualDescText = "Very poor or no connection — testing may fail.";            qualFillColor = "#ef4444"; }
+
+    /* ── Render ── */
+    badge.textContent         = qualLabel;
+    typeName.textContent      = connLabel;
+    typeSub.textContent       = typeDetail;
+    typeIco.className         = iconClass;
+    document.getElementById("conn-type-hero").className = `conn-type-hero ${colorClass}`;
+
+    sigEtype.textContent      = etype    ? etype.toUpperCase()             : "N/A";
+    sigDownlink.textContent   = downlink !== null ? `${downlink} Mbps`     : "N/A";
+    sigRtt.textContent        = rtt      !== null ? `${rtt} ms`            : "N/A";
+    sigSavedata.textContent   = saveData ? "Enabled ⚡" : "Off";
+    sigSavedata.style.color   = saveData ? "#fbbf24" : "";
+
+    qualFill.style.background = qualFillColor;
+    qualFill.style.width      = score + "%";
+    qualPct.textContent       = score + "%";
+    qualDesc.textContent      = qualDescText;
+
+    /* Ring arc: circumference = 2πr ≈ 113 for r=18 */
+    const offset = 113 - (score / 100) * 113;
+    ringFg.style.stroke           = qualFillColor;
+    ringFg.style.strokeDashoffset = offset;
+    ringLabel.textContent         = score;
+    ringLabel.style.color         = qualFillColor;
+
+    /* Live update on change */
+    nc.onchange = detectConnectionQuality;
+}
 
 function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
 
@@ -337,9 +395,6 @@ function resetUI() {
 
 function startTest() {
     const btn = document.getElementById("btn");
-    /* Check inline dropdown first, else panel selection */
-    const dd = document.getElementById("srv-dropdown");
-    if (dd.value) selSrvId = dd.value;
     btn.disabled = true; btn.textContent = "Testing…";
     resetUI(); setDot(true);
     const url = selSrvId ? `/run-speedtest?server_id=${selSrvId}` : "/run-speedtest";
@@ -393,3 +448,4 @@ function startTest() {
 renderHist();
 renderChart();
 fetchGeoIP();
+detectConnectionQuality();
