@@ -1207,7 +1207,7 @@ h2 img {
 /* ══ Feature row — 3 col ══ */
 .feature-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
+    grid-template-columns: 1fr 1fr;
     gap: 12px;
     margin: 0 30px;
 }
@@ -1233,7 +1233,7 @@ h2 img {
 }
 
 .geo-key {
-    font-size: 0.58rem;
+    font-size: 0.7rem;
     color: var(--text3);
     text-transform: uppercase;
     letter-spacing: 1px;
@@ -1561,6 +1561,131 @@ th {
     font-size: var(--font-h1);
 }
 
+/* ══════════════════════════════════════════════════════════════
+   Signal Quality / WiFi-Wired Detector  — add to your style.css
+══════════════════════════════════════════════════════════════ */
+
+/* Card body */
+.conn-detect-body {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 4px 0 0;
+}
+
+/* ── Hero row ── */
+.conn-type-hero {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 12px 14px;
+    border-radius: 10px;
+    background: #0e0e0e;
+    border: 1px solid #1c1c1c;
+    transition: border-color .3s, background .3s;
+}
+.conn-type-hero.conn-wired    { border-color: #22d3ee40; background: #0d1e22; }
+.conn-type-hero.conn-wifi     { border-color: #818cf840; background: #111320; }
+.conn-type-hero.conn-cellular { border-color: #34d39940; background: #0d1f17; }
+.conn-type-hero.conn-offline  { border-color: #f8717140; background: #1f0d0d; }
+
+.conn-type-icon {
+    width: 38px; height: 38px;
+    border-radius: 50%;
+    background: #161616;
+    border: 1px solid #2a2a2a;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+    font-size: 16px;
+    color: #52525b;
+    transition: color .3s;
+}
+.conn-wired    .conn-type-icon { color: #22d3ee; }
+.conn-wifi     .conn-type-icon { color: #818cf8; }
+.conn-cellular .conn-type-icon { color: #34d399; }
+.conn-offline  .conn-type-icon { color: #f87171; }
+
+.conn-type-info { flex: 1; min-width: 0; }
+.conn-type-name {
+    font-size: 13px; font-weight: 700;
+    color: #e4e4e7;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.conn-type-sub {
+    font-size: 10px; color: #52525b; margin-top: 2px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* ── Quality ring ── */
+.conn-quality-ring {
+    position: relative;
+    width: 44px; height: 44px; flex-shrink: 0;
+}
+.ring-svg { width: 44px; height: 44px; transform: rotate(-90deg); }
+.ring-bg  { fill: none; stroke: #1c1c1c; stroke-width: 4; }
+.ring-fg  {
+    fill: none;
+    stroke: #22d3ee;
+    stroke-width: 4;
+    stroke-linecap: round;
+    transition: stroke-dashoffset .7s cubic-bezier(.4,0,.2,1), stroke .4s;
+}
+.ring-label {
+    position: absolute;
+    inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 9px; font-weight: 700;
+    color: #22d3ee;
+    transition: color .4s;
+}
+
+/* ── Metric rows ── */
+.sig-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.sig-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 10px;
+    background: #0e0e0e;
+    border: 1px solid #1c1c1c;
+    border-radius: 7px;
+}
+.sig-key {
+    font-size: 11px; color: #52525b;
+    display: flex; align-items: center; gap: 7px;
+}
+.sig-key i { font-size: 10px; color: #3f3f46; }
+.sig-val {
+    font-size: 11px; font-weight: 700; color: #a1a1aa;
+}
+
+/* ── Quality bar ── */
+.sig-quality-bar-wrap {
+    display: flex; flex-direction: column; gap: 5px;
+}
+.sig-quality-label-row {
+    display: flex; justify-content: space-between;
+    font-size: 10px; color: #52525b;
+}
+.sig-quality-track {
+    height: 5px; border-radius: 99px;
+    background: #1c1c1c; overflow: hidden;
+}
+.sig-quality-fill {
+    height: 100%; border-radius: 99px;
+    width: 0%;
+    background: #22d3ee;
+    transition: width .7s cubic-bezier(.4,0,.2,1), background .4s;
+}
+.sig-quality-desc {
+    font-size: 10px; color: #3f3f46;
+    line-height: 1.4;
+}
+
 /* ══ Responsive ══ */
 @media (max-width: 720px) {
     .test-body {
@@ -1585,189 +1710,551 @@ th {
     }
 }
 
-/* FIXED */
+/* ==========================================================================
+   RESPONSIVE TYPOGRAPHY — COMPLETE BREAKPOINT SCALE
+   Strategy  : CSS custom properties on :root, mobile-first (min-width).
+   Tokens    : --font-* for global tags  |  --ui-* for NetPulse UI elements
+   Breakpoints: 360 · 480 · 640 · 768 · 1024 · 1280 · 1440 · 1536 · 1920
+   ========================================================================== */
+
+/* ── BP 1 · 360px — Tiny phones (Galaxy A series, older iPhones) ── */
+@media (min-width: 360px) {
+  :root {
+    /* Global tags */
+    --font-p:     13.5px;
+    --font-h1:    1.45rem;
+    --font-h2:    1.18rem;
+    --font-h3:    1.06rem;
+    --font-h4:    1.00rem;
+    --font-li:    13.5px;
+    --font-a:     13.5px;
+    --font-i:     13px;
+    --font-table: 13.5px;
+
+    /* NetPulse UI elements */
+    --ui-brand:         13px;   /* .brand, .typewriter */
+    --ui-chip:          10px;   /* .chip, .server-chip */
+    --ui-sc-label:      9px;    /* stat card label */
+    --ui-sc-val:        22px;   /* stat card big number */
+    --ui-sc-unit:       9px;    /* "Mbps" / "ms" */
+    --ui-sc-badge:      8px;    /* Done / Testing badge */
+    --ui-dr-val:        28px;   /* dial readout number */
+    --ui-dr-unit:       9px;    /* "Mbps" under dial */
+    --ui-dr-stage:      9px;    /* stage text */
+    --ui-status:        11px;   /* status bar text */
+    --ui-pct:           10px;   /* progress % text */
+    --ui-sec-title:     11px;   /* card section headers */
+    --ui-sec-meta:      9px;    /* badge/meta next to title */
+    --ui-geo-key:       10px;
+    --ui-geo-val:       11px;
+    --ui-conn-key:      10px;
+    --ui-conn-val:      11px;
+    --ui-sig-key:       10px;
+    --ui-sig-val:       10px;
+    --ui-conn-name:     12px;   /* WiFi/Wired hero label */
+    --ui-conn-sub:      9px;
+    --ui-ring-label:    8px;
+    --ui-hist-time:     9px;
+    --ui-hist-val:      10px;
+    --ui-hist-badge:    8px;
+    --ui-btn-primary:   12px;
+    --ui-btn-ghost:     11px;
+    --ui-tab:           10px;
+    --ui-lb-lbl:        9px;
+    --ui-lb-pct:        9px;
+    --ui-netpulse-h2:   1.3rem;
+    --ui-netpulse-p:    12.5px;
+  }
+
+  .container { max-width: 100%; padding: 0 12px; }
+}
+
+/* ── BP 2 · 480px — Large phones (iPhone 14, Pixel 7) ── */
 @media (min-width: 480px) {
   :root {
-    --font-p: 14.5px;
-    --font-h1: 1.55rem;
-    --font-h2: 1.24rem;
-    --font-h3: 1.12rem;
-    --font-h4: 1.04rem;
-    --font-li: 14.5px;
-    --font-a: 14.5px;
-    --font-i: 14px;
+    --font-p:     14.5px;
+    --font-h1:    1.55rem;
+    --font-h2:    1.24rem;
+    --font-h3:    1.12rem;
+    --font-h4:    1.04rem;
+    --font-li:    14.5px;
+    --font-a:     14.5px;
+    --font-i:     14px;
     --font-table: 14.5px;
+
+    --ui-brand:         14px;
+    --ui-chip:          11px;
+    --ui-sc-label:      10px;
+    --ui-sc-val:        26px;
+    --ui-sc-unit:       10px;
+    --ui-sc-badge:      9px;
+    --ui-dr-val:        32px;
+    --ui-dr-unit:       10px;
+    --ui-dr-stage:      10px;
+    --ui-status:        12px;
+    --ui-pct:           11px;
+    --ui-sec-title:     12px;
+    --ui-sec-meta:      10px;
+    --ui-geo-key:       11px;
+    --ui-geo-val:       12px;
+    --ui-conn-key:      11px;
+    --ui-conn-val:      12px;
+    --ui-sig-key:       11px;
+    --ui-sig-val:       11px;
+    --ui-conn-name:     13px;
+    --ui-conn-sub:      10px;
+    --ui-ring-label:    9px;
+    --ui-hist-time:     10px;
+    --ui-hist-val:      11px;
+    --ui-hist-badge:    9px;
+    --ui-btn-primary:   13px;
+    --ui-btn-ghost:     12px;
+    --ui-tab:           11px;
+    --ui-lb-lbl:        10px;
+    --ui-lb-pct:        10px;
+    --ui-netpulse-h2:   1.4rem;
+    --ui-netpulse-p:    13px;
   }
 
-  .container {
-    max-width: 100%;
-    padding: 0 15px;
-  }
+  .container { max-width: 100%; padding: 0 15px; }
 }
 
+/* ── BP 3 · 640px — Large phones landscape / small tablets ── */
+@media (min-width: 640px) {
+  :root {
+    --font-p:     15px;
+    --font-h1:    1.62rem;
+    --font-h2:    1.3rem;
+    --font-h3:    1.16rem;
+    --font-h4:    1.06rem;
+    --font-li:    15px;
+    --font-a:     15px;
+    --font-i:     14px;
+    --font-table: 14.5px;
+
+    --ui-brand:         14px;
+    --ui-chip:          11px;
+    --ui-sc-label:      10px;
+    --ui-sc-val:        28px;
+    --ui-sc-unit:       10px;
+    --ui-sc-badge:      9px;
+    --ui-dr-val:        34px;
+    --ui-dr-unit:       10px;
+    --ui-dr-stage:      10px;
+    --ui-status:        12px;
+    --ui-pct:           11px;
+    --ui-sec-title:     12px;
+    --ui-sec-meta:      10px;
+    --ui-geo-key:       11px;
+    --ui-geo-val:       12px;
+    --ui-conn-key:      11px;
+    --ui-conn-val:      12px;
+    --ui-sig-key:       11px;
+    --ui-sig-val:       11px;
+    --ui-conn-name:     13px;
+    --ui-conn-sub:      10px;
+    --ui-ring-label:    9px;
+    --ui-hist-time:     10px;
+    --ui-hist-val:      11px;
+    --ui-hist-badge:    9px;
+    --ui-btn-primary:   13px;
+    --ui-btn-ghost:     12px;
+    --ui-tab:           11px;
+    --ui-lb-lbl:        10px;
+    --ui-lb-pct:        10px;
+    --ui-netpulse-h2:   1.45rem;
+    --ui-netpulse-p:    13.5px;
+  }
+
+  .container { max-width: 640px; padding: 0 16px; }
+}
+
+/* ── BP 4 · 768px — Tablets (iPad Mini, iPad Air portrait) ── */
 @media (min-width: 768px) {
   :root {
-    --font-p: 15px;
-    --font-h1: 1.6rem;
-    --font-h2: 1.28rem;
-    --font-h3: 1.15rem;
-    --font-h4: 1.05rem;
-    --font-li: 15px;
-    --font-a: 15px;
-    --font-i: 14px;
+    --font-p:     15px;
+    --font-h1:    1.6rem;
+    --font-h2:    1.28rem;
+    --font-h3:    1.15rem;
+    --font-h4:    1.05rem;
+    --font-li:    15px;
+    --font-a:     15px;
+    --font-i:     14px;
     --font-table: 15px;
+
+    --ui-brand:         15px;
+    --ui-chip:          11.5px;
+    --ui-sc-label:      10px;
+    --ui-sc-val:        30px;
+    --ui-sc-unit:       10px;
+    --ui-sc-badge:      9px;
+    --ui-dr-val:        36px;
+    --ui-dr-unit:       10px;
+    --ui-dr-stage:      10px;
+    --ui-status:        12.5px;
+    --ui-pct:           11px;
+    --ui-sec-title:     12px;
+    --ui-sec-meta:      10px;
+    --ui-geo-key:       11px;
+    --ui-geo-val:       12px;
+    --ui-conn-key:      11px;
+    --ui-conn-val:      12px;
+    --ui-sig-key:       11px;
+    --ui-sig-val:       11px;
+    --ui-conn-name:     13px;
+    --ui-conn-sub:      10px;
+    --ui-ring-label:    9px;
+    --ui-hist-time:     10px;
+    --ui-hist-val:      11px;
+    --ui-hist-badge:    9px;
+    --ui-btn-primary:   13px;
+    --ui-btn-ghost:     12px;
+    --ui-tab:           11px;
+    --ui-lb-lbl:        10px;
+    --ui-lb-pct:        10px;
+    --ui-netpulse-h2:   1.5rem;
+    --ui-netpulse-p:    14px;
   }
 
-  .container {
-    max-width: 768px;
-  }
-
-  .logo img {
-    width: 27px;
-    height: 27px;
-  }
+  .container    { max-width: 768px; }
+  .logo img     { width: 27px; height: 27px; }
 }
-/* ==========================================================================
-   BREAKPOINT 3: 1024px (DESKTOP - Most Important)
-   ========================================================================== */
 
+/* ── BP 5 · 1024px — Desktop (Most Important) ── */
 @media (min-width: 1024px) {
   :root {
-    --font-p: 17px;
-    --font-h1: 1.8rem;
-    --font-h2: 1.45rem;
-    --font-h3: 1.28rem;
-    --font-h4: 1.1rem;
-    --font-li: 17px;
-    --font-a: 16px;
-    --font-i: 15px;
+    --font-p:     17px;
+    --font-h1:    1.8rem;
+    --font-h2:    1.45rem;
+    --font-h3:    1.28rem;
+    --font-h4:    1.1rem;
+    --font-li:    17px;
+    --font-a:     16px;
+    --font-i:     15px;
     --font-table: 16px;
+
+    --ui-brand:         16px;
+    --ui-chip:          12px;
+    --ui-sc-label:      11px;
+    --ui-sc-val:        32px;
+    --ui-sc-unit:       11px;
+    --ui-sc-badge:      10px;
+    --ui-dr-val:        40px;
+    --ui-dr-unit:       11px;
+    --ui-dr-stage:      11px;
+    --ui-status:        13px;
+    --ui-pct:           12px;
+    --ui-sec-title:     13px;
+    --ui-sec-meta:      10.5px;
+    --ui-geo-key:       11.5px;
+    --ui-geo-val:       12.5px;
+    --ui-conn-key:      11.5px;
+    --ui-conn-val:      12.5px;
+    --ui-sig-key:       11.5px;
+    --ui-sig-val:       11.5px;
+    --ui-conn-name:     14px;
+    --ui-conn-sub:      11px;
+    --ui-ring-label:    9.5px;
+    --ui-hist-time:     11px;
+    --ui-hist-val:      12px;
+    --ui-hist-badge:    10px;
+    --ui-btn-primary:   14px;
+    --ui-btn-ghost:     12.5px;
+    --ui-tab:           11.5px;
+    --ui-lb-lbl:        10.5px;
+    --ui-lb-pct:        10.5px;
+    --ui-netpulse-h2:   1.7rem;
+    --ui-netpulse-p:    15px;
   }
 
-  .container {
-        /* If you want the content to stay at 1024px but the navbar to be black across the screen */
-        max-width: 1200px; 
-        margin: 0 auto;   /* Keeps it centered */
-    }
-    
-    /* If you want the navbar items to touch the edges, use this: */
-    .navbar .container {
-        max-width: 100%; 
-        padding: 0 40px;
-    }
-
-  .logo img {
-      width: 29px;
-      height: 29px;
-  }
-
-  .menu-toggle {
-      display: none;
-  }
+  .container        { max-width: 1200px; margin: 0 auto; }
+  .navbar .container{ max-width: 100%;   padding: 0 40px; }
+  .logo img         { width: 29px;       height: 29px; }
+  .menu-toggle      { display: none; }
 
   .navbar {
-      position: relative;
-      color: white;
-      text-align: center;
-      border-radius: 5px;
-      overflow: hidden;
+    position: relative;
+    color: white;
+    text-align: center;
+    border-radius: 5px;
+    overflow: hidden;
   }
+  .navbar .container      { flex-direction: row; align-items: center; justify-content: space-between; }
+  .navbar .logo           { font-size: 1.3rem; width: auto; justify-content: flex-start; }
+  .navbar .nav-links      { position: static; max-height: none; flex-direction: row; margin-bottom: 0; padding-top: 0; width: auto; }
+  .navbar .nav-links ul   { display: flex; flex-direction: row; align-items: center; margin-left: 0; width: auto; }
+  .navbar .nav-links ul li a { padding: 10px 15px; width: auto; white-space: nowrap; }
 
-  .navbar .container {
-      flex-direction: row;
-      align-items: center;
-      justify-content: space-between;
-  }
-
-  .navbar .logo {
-      font-size: 1.3rem;
-      width: auto;
-      justify-content: flex-start;
-  }
-
-  .navbar .nav-links {
-      position: static;
-      max-height: none;
-      flex-direction: row;
-      margin-bottom: 0;
-      padding-top: 0;
-      width: auto;
-  }
-
-  .navbar .nav-links ul {
-      display: flex;
-      flex-direction: row;
-      align-items: center;
-      margin-left: 0;
-      width: auto;
-  }
-
-  .navbar .nav-links ul li a {
-      padding: 10px 15px;
-      width: auto;
-      white-space: nowrap;
-  }
-
-  .stat-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 10px;
-  }
-
-  .footer .contacts {
-    flex-direction: row;
-    gap: 20px;
-  }
-
-  .menu {
-    flex-direction: row;
-  }
+  .stat-grid          { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .footer .contacts   { flex-direction: row; gap: 20px; }
+  .menu               { flex-direction: row; }
 }
 
+/* ── BP 6 · 1280px — Wide desktop (MacBook 13", 1080p monitors) ── */
 @media (min-width: 1280px) {
   :root {
-    --font-p: 17.5px;
-    --font-h1: 1.82rem;
-    --font-h2: 1.52rem;
-    --font-h3: 1.32rem;
-    --font-h4: 1.15rem;
-    --font-li: 18px;
-    --font-a: 16.5px;
-    --font-i: 15.5px;
+    --font-p:     17.5px;
+    --font-h1:    1.82rem;
+    --font-h2:    1.52rem;
+    --font-h3:    1.32rem;
+    --font-h4:    1.15rem;
+    --font-li:    18px;
+    --font-a:     16.5px;
+    --font-i:     15.5px;
     --font-table: 16.5px;
+
+    --ui-brand:         16.5px;
+    --ui-chip:          12px;
+    --ui-sc-label:      11.5px;
+    --ui-sc-val:        34px;
+    --ui-sc-unit:       11px;
+    --ui-sc-badge:      10px;
+    --ui-dr-val:        42px;
+    --ui-dr-unit:       11px;
+    --ui-dr-stage:      11px;
+    --ui-status:        13px;
+    --ui-pct:           12px;
+    --ui-sec-title:     13.5px;
+    --ui-sec-meta:      11px;
+    --ui-geo-key:       12px;
+    --ui-geo-val:       13px;
+    --ui-conn-key:      12px;
+    --ui-conn-val:      13px;
+    --ui-sig-key:       12px;
+    --ui-sig-val:       12px;
+    --ui-conn-name:     14px;
+    --ui-conn-sub:      11px;
+    --ui-ring-label:    10px;
+    --ui-hist-time:     11px;
+    --ui-hist-val:      12px;
+    --ui-hist-badge:    10px;
+    --ui-btn-primary:   14px;
+    --ui-btn-ghost:     13px;
+    --ui-tab:           12px;
+    --ui-lb-lbl:        11px;
+    --ui-lb-pct:        11px;
+    --ui-netpulse-h2:   1.75rem;
+    --ui-netpulse-p:    15.5px;
   }
 
-  .container {
-    max-width: 1280px;
-  }
-
-  .logo img {
-    width: 32px;
-    height: 32px;
-  }
+  .container { max-width: 1280px; }
+  .logo img  { width: 32px; height: 32px; }
 }
 
-
-/* ==========================================================================
-   BREAKPOINT 5: 1440px (Extra Large)
-   ========================================================================== */
-
+/* ── BP 7 · 1440px — Large desktop (iMac 24", 1440p) ── */
 @media (min-width: 1440px) {
   :root {
-    --font-p: 18px;
-    --font-h1: 1.875rem;
-    --font-h2: 1.55rem;
-    --font-h3: 1.39rem;
-    --font-h4: 1.2rem;
-    --font-li: 18.5px;
-    --font-a: 17px;
-    --font-i: 16px;
+    --font-p:     18px;
+    --font-h1:    1.875rem;
+    --font-h2:    1.55rem;
+    --font-h3:    1.39rem;
+    --font-h4:    1.2rem;
+    --font-li:    18.5px;
+    --font-a:     17px;
+    --font-i:     16px;
     --font-table: 17px;
+
+    --ui-brand:         17px;
+    --ui-chip:          12.5px;
+    --ui-sc-label:      12px;
+    --ui-sc-val:        36px;
+    --ui-sc-unit:       11.5px;
+    --ui-sc-badge:      10.5px;
+    --ui-dr-val:        44px;
+    --ui-dr-unit:       11.5px;
+    --ui-dr-stage:      11.5px;
+    --ui-status:        13.5px;
+    --ui-pct:           12.5px;
+    --ui-sec-title:     14px;
+    --ui-sec-meta:      11px;
+    --ui-geo-key:       12px;
+    --ui-geo-val:       13px;
+    --ui-conn-key:      12px;
+    --ui-conn-val:      13px;
+    --ui-sig-key:       12px;
+    --ui-sig-val:       12px;
+    --ui-conn-name:     15px;
+    --ui-conn-sub:      11.5px;
+    --ui-ring-label:    10px;
+    --ui-hist-time:     11.5px;
+    --ui-hist-val:      12.5px;
+    --ui-hist-badge:    10.5px;
+    --ui-btn-primary:   14.5px;
+    --ui-btn-ghost:     13px;
+    --ui-tab:           12px;
+    --ui-lb-lbl:        11px;
+    --ui-lb-pct:        11px;
+    --ui-netpulse-h2:   1.8rem;
+    --ui-netpulse-p:    16px;
   }
 
-  .container {
-    max-width: 1440px;
-  }
+  .container { max-width: 1440px; }
 }
 
+/* ── BP 8 · 1536px — QHD laptops (Dell XPS 15, Surface Laptop) ── */
+@media (min-width: 1536px) {
+  :root {
+    --font-p:     18.5px;
+    --font-h1:    1.95rem;
+    --font-h2:    1.6rem;
+    --font-h3:    1.44rem;
+    --font-h4:    1.25rem;
+    --font-li:    19px;
+    --font-a:     17.5px;
+    --font-i:     16.5px;
+    --font-table: 17.5px;
 
+    --ui-brand:         17.5px;
+    --ui-chip:          13px;
+    --ui-sc-label:      12.5px;
+    --ui-sc-val:        38px;
+    --ui-sc-unit:       12px;
+    --ui-sc-badge:      11px;
+    --ui-dr-val:        46px;
+    --ui-dr-unit:       12px;
+    --ui-dr-stage:      12px;
+    --ui-status:        14px;
+    --ui-pct:           13px;
+    --ui-sec-title:     14.5px;
+    --ui-sec-meta:      11.5px;
+    --ui-geo-key:       12.5px;
+    --ui-geo-val:       13.5px;
+    --ui-conn-key:      12.5px;
+    --ui-conn-val:      13.5px;
+    --ui-sig-key:       12.5px;
+    --ui-sig-val:       12.5px;
+    --ui-conn-name:     15.5px;
+    --ui-conn-sub:      12px;
+    --ui-ring-label:    10.5px;
+    --ui-hist-time:     12px;
+    --ui-hist-val:      13px;
+    --ui-hist-badge:    11px;
+    --ui-btn-primary:   15px;
+    --ui-btn-ghost:     13.5px;
+    --ui-tab:           12.5px;
+    --ui-lb-lbl:        11.5px;
+    --ui-lb-pct:        11.5px;
+    --ui-netpulse-h2:   1.85rem;
+    --ui-netpulse-p:    16.5px;
+  }
+
+  .container { max-width: 1500px; }
+}
+
+/* ── BP 9 · 1920px — Full HD / 2K monitors ── */
+@media (min-width: 1920px) {
+  :root {
+    --font-p:     19px;
+    --font-h1:    2.1rem;
+    --font-h2:    1.7rem;
+    --font-h3:    1.52rem;
+    --font-h4:    1.32rem;
+    --font-li:    19.5px;
+    --font-a:     18px;
+    --font-i:     17px;
+    --font-table: 18px;
+
+    --ui-brand:         18px;
+    --ui-chip:          13.5px;
+    --ui-sc-label:      13px;
+    --ui-sc-val:        42px;
+    --ui-sc-unit:       12.5px;
+    --ui-sc-badge:      11.5px;
+    --ui-dr-val:        50px;
+    --ui-dr-unit:       12.5px;
+    --ui-dr-stage:      12.5px;
+    --ui-status:        14.5px;
+    --ui-pct:           13.5px;
+    --ui-sec-title:     15px;
+    --ui-sec-meta:      12px;
+    --ui-geo-key:       13px;
+    --ui-geo-val:       14px;
+    --ui-conn-key:      13px;
+    --ui-conn-val:      14px;
+    --ui-sig-key:       13px;
+    --ui-sig-val:       13px;
+    --ui-conn-name:     16px;
+    --ui-conn-sub:      12.5px;
+    --ui-ring-label:    11px;
+    --ui-hist-time:     12.5px;
+    --ui-hist-val:      13.5px;
+    --ui-hist-badge:    11.5px;
+    --ui-btn-primary:   15.5px;
+    --ui-btn-ghost:     14px;
+    --ui-tab:           13px;
+    --ui-lb-lbl:        12px;
+    --ui-lb-pct:        12px;
+    --ui-netpulse-h2:   2rem;
+    --ui-netpulse-p:    17px;
+  }
+
+  .container { max-width: 1700px; }
+  .logo img  { width: 36px; height: 36px; }
+}
+
+/* ==========================================================================
+   UI TOKEN APPLICATION
+   Bind every --ui-* token to its selector so all screens inherit correctly.
+   ========================================================================== */
+
+/* Navbar brand */
+.brand, .typewriter              { font-size: var(--ui-brand, 14px); }
+
+/* Chips */
+.chip, .server-chip              { font-size: var(--ui-chip, 11px); }
+
+/* Stat cards */
+.sc-label                        { font-size: var(--ui-sc-label, 10px); }
+.sc-val                          { font-size: var(--ui-sc-val, 26px); }
+.sc-unit                         { font-size: var(--ui-sc-unit, 10px); }
+.sc-badge                        { font-size: var(--ui-sc-badge, 9px); }
+
+/* Dial readout */
+.dr-val                          { font-size: var(--ui-dr-val, 34px); }
+.dr-unit                         { font-size: var(--ui-dr-unit, 10px); }
+.dr-stage                        { font-size: var(--ui-dr-stage, 10px); }
+
+/* Status + progress */
+.status-txt                      { font-size: var(--ui-status, 12px); }
+.prog-pct                        { font-size: var(--ui-pct, 11px); }
+
+/* Card section headers */
+.sec-title                       { font-size: var(--ui-sec-title, 12px); }
+.sec-meta, .sec-btn              { font-size: var(--ui-sec-meta, 10px); }
+
+/* GeoIP panel */
+.geo-key                         { font-size: var(--ui-geo-key, 11px); }
+.geo-val                         { font-size: var(--ui-geo-val, 12px); }
+
+/* Connection info panel */
+.conn-key                        { font-size: var(--ui-conn-key, 11px); }
+.conn-val                        { font-size: var(--ui-conn-val, 12px); }
+
+/* Signal quality panel */
+.sig-key                         { font-size: var(--ui-sig-key, 11px); }
+.sig-val                         { font-size: var(--ui-sig-val, 11px); }
+.conn-type-name                  { font-size: var(--ui-conn-name, 13px); }
+.conn-type-sub                   { font-size: var(--ui-conn-sub, 10px); }
+.ring-label                      { font-size: var(--ui-ring-label, 9px); }
+.sig-quality-label-row,
+.sig-quality-desc                { font-size: var(--ui-sec-meta, 10px); }
+
+/* History */
+.hist-time                       { font-size: var(--ui-hist-time, 10px); }
+.hv                              { font-size: var(--ui-hist-val, 11px); }
+.hist-badge                      { font-size: var(--ui-hist-badge, 9px); }
+
+/* Buttons */
+.btn-primary                     { font-size: var(--ui-btn-primary, 13px); }
+.btn-ghost                       { font-size: var(--ui-btn-ghost, 12px); }
+
+/* Chart tabs */
+.tab                             { font-size: var(--ui-tab, 11px); }
+
+/* Load bars */
+.lb-lbl                          { font-size: var(--ui-lb-lbl, 10px); }
+.lb-pct                          { font-size: var(--ui-lb-pct, 10px); }
+
+/* NetPulse hero section */
+.netpulse h2                     { font-size: var(--ui-netpulse-h2, 1.5rem); }
+.netpulse p                      { font-size: var(--ui-netpulse-p, 13px); }
