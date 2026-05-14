@@ -134,15 +134,29 @@ async function fetchGeoIP() {
     const badge = document.getElementById("geo-badge"); badge.textContent = "Loading";
     ["geo-isp", "geo-loc", "geo-country", "geo-tz", "geo-host"].forEach(id => { const el = document.getElementById(id); el.textContent = "—"; el.className = "geo-val loading"; });
     try {
-        const res = await fetch("/get-geoip"), d = await res.json();
+        // Step 1: Get the real client IP directly from ipinfo.io in the browser.
+        // This avoids the server returning its own (Render hosting) IP instead of yours.
+        const ipRes = await fetch("https://ipinfo.io/json");
+        const ipData = await ipRes.json();
+        const realIp = ipData.ip;
+
+        // Step 2: Pass the real IP to our backend so it queries ipinfo.io for the right address.
+        const res = await fetch(`/get-geoip?ip=${encodeURIComponent(realIp)}`), d = await res.json();
         if (d.error) throw new Error(d.error);
         const isp = d.isp.replace(/^AS\d+\s+/, "");
         function set(id, v) { const el = document.getElementById(id); el.textContent = v || "—"; el.className = "geo-val"; }
         set("geo-isp", isp); set("geo-loc", d.city); set("geo-country", `${d.country} — ${d.region}`); set("geo-tz", d.timezone); set("geo-host", d.hostname !== "N/A" ? d.hostname : d.ip);
         badge.textContent = "Live";
-        document.getElementById("conn-ip").textContent = d.ip || "—";
+        document.getElementById("conn-ip").textContent = realIp || "—";
         document.getElementById("conn-ip").classList.add("hi");
-        const chip = document.getElementById("ip-chip"); chip.textContent = d.ip; chip.className = "chip live";
+        const chip = document.getElementById("ip-chip"); chip.textContent = realIp; chip.className = "chip live";
+
+        // Also pass loc to server selector for accurate nearby servers
+        if (ipData.loc) {
+            const [lat, lon] = ipData.loc.split(",");
+            window._userLat = parseFloat(lat);
+            window._userLon = parseFloat(lon);
+        }
     } catch {
         badge.textContent = "Error";
         ["geo-isp", "geo-loc", "geo-country", "geo-tz", "geo-host"].forEach(id => { const el = document.getElementById(id); el.textContent = "Unavailable"; });
@@ -304,9 +318,10 @@ function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").
 /* ══ Public IP ══ */
 (async function () {
     try {
-        const res = await fetch("/get-ip"), d = await res.json();
+        // Fetch IP directly in the browser — avoids returning the Render server's IP
+        const res = await fetch("https://ipinfo.io/json"), d = await res.json();
         const chip = document.getElementById("ip-chip");
-        if (d.ip && d.ip !== "Unavailable") { chip.textContent = d.ip; chip.className = "chip live"; }
+        if (d.ip) { chip.textContent = d.ip; chip.className = "chip live"; }
         else { chip.textContent = "Unavailable"; chip.className = "chip error"; }
     } catch { document.getElementById("ip-chip").textContent = "Unavailable"; }
 })();
