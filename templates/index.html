@@ -139,20 +139,6 @@
                         </div>
                     </div>
 
-                    <!-- Server selector -->
-                    <div class="srv-inline">
-                        <div class="srv-inline-label">Server</div>
-                        <div class="srv-inline-row">
-                            <div class="srv-select-wrap">
-                                <select class="srv-select" id="srv-dropdown">
-                                    <option value="">Auto — Best Server</option>
-                                </select>
-                                <div class="srv-select-arrow"></div>
-                            </div>
-                            <button class="btn-ghost" id="srv-load-btn" onclick="fetchServers()">Load</button>
-                        </div>
-                    </div>
-
                     <!-- Spacer -->
                     <div style="flex:1"></div>
 
@@ -212,22 +198,67 @@
                 </div>
             </div>
 
-            <!-- Server Selection -->
-            <div class="card">
+            <!-- WiFi vs Wired Detector -->
+            <!-- <div class="card">
                 <div class="sec-hdr">
-                    <span class="sec-title">Server Selection</span>
-                    <div class="auto-row" style="gap:8px;">
-                        <span class="sec-meta auto-lbl" id="srv-mode-lbl">Auto</span>
-                        <button class="sec-btn" onclick="selectAuto()">Reset</button>
-                    </div>
+                    <span class="sec-title">Signal Quality</span>
+                    <span class="sec-meta" id="conn-type-badge">Detecting…</span>
                 </div>
-                <div class="srv-body">
-                    <button class="btn-ghost" id="srv-fetch-btn" onclick="fetchServers()">Fetch Nearby Servers</button>
-                    <div class="srv-scroll" id="srv-list">
-                        <div class="srv-empty">Click to load nearby servers</div>
+                <div class="conn-detect-body">
+
+                    <div class="conn-type-hero" id="conn-type-hero">
+                        <div class="conn-type-icon" id="conn-type-icon">
+                            <i class="fas fa-wifi" id="conn-type-ico"></i>
+                        </div>
+                        <div class="conn-type-info">
+                            <div class="conn-type-name" id="conn-type-name">Detecting…</div>
+                            <div class="conn-type-sub" id="conn-type-sub">Reading browser API</div>
+                        </div>
+                        <div class="conn-quality-ring" id="conn-quality-ring">
+                            <svg viewBox="0 0 44 44" class="ring-svg">
+                                <circle cx="22" cy="22" r="18" class="ring-bg" />
+                                <circle cx="22" cy="22" r="18" class="ring-fg" id="ring-fg" stroke-dasharray="113"
+                                    stroke-dashoffset="113" />
+                            </svg>
+                            <span class="ring-label" id="ring-label">—</span>
+                        </div>
                     </div>
+
+                    <div class="sig-grid">
+                        <div class="sig-row">
+                            <span class="sig-key"><i class="fas fa-tachometer-alt"></i> Effective Type</span>
+                            <span class="sig-val" id="sig-etype">—</span>
+                        </div>
+                        <div class="sig-row">
+                            <span class="sig-key"><i class="fas fa-download"></i> Downlink Hint</span>
+                            <span class="sig-val" id="sig-downlink">—</span>
+                        </div>
+                        <div class="sig-row">
+                            <span class="sig-key"><i class="fas fa-clock"></i> RTT</span>
+                            <span class="sig-val" id="sig-rtt">—</span>
+                        </div>
+                        <div class="sig-row">
+                            <span class="sig-key"><i class="fas fa-leaf"></i> Save Data</span>
+                            <span class="sig-val" id="sig-savedata">—</span>
+                        </div>
+                    </div>
+
+                    <div class="sig-quality-bar-wrap">
+                        <div class="sig-quality-label-row">
+                            <span>Signal Quality</span>
+                            <span id="sig-quality-pct">—</span>
+                        </div>
+                        <div class="sig-quality-track">
+                            <div class="sig-quality-fill" id="sig-quality-fill" style="width:0%"></div>
+                        </div>
+                        <div class="sig-quality-desc" id="sig-quality-desc">Waiting for data…</div>
+                    </div>
+
+                    <button class="btn-ghost" style="margin-top:4px;width:100%;" onclick="detectConnectionQuality()">
+                        <i class="fas fa-sync-alt"></i> Re-detect
+                    </button>
                 </div>
-            </div>
+            </div> -->
 
             <!-- Connection Info -->
             <div class="card">
