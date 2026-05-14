@@ -268,27 +268,17 @@ def get_geoip():
 
 @app.route("/get-servers")
 def get_servers():
-    """
-    Now accepts ?lat=XX&lon=YY from the browser (user's real location via ipinfo.io).
-    Falls back to server location if not provided.
-    """
     try:
         lat_param = request.args.get("lat")
         lon_param = request.args.get("lon")
 
         if lat_param and lon_param:
-            # ✅ Use USER's real lat/lon to find nearby servers
             user_lat = float(lat_param)
             user_lon = float(lon_param)
         else:
-            # Fallback: use server location (old behaviour)
-            try:
-                with urllib.request.urlopen("https://ipinfo.io/json", timeout=5) as res:
-                    geoip = json.loads(res.read().decode())
-                loc = geoip.get("loc", "0,0").split(",")
-                user_lat, user_lon = float(loc[0]), float(loc[1])
-            except Exception:
-                user_lat, user_lon = 0.0, 0.0
+            # FIX: Never call ipinfo.io from Flask — it returns Render's US location (Virginia)
+            # Browser must always send lat/lon. Return 400 so the JS shows a proper message.
+            return jsonify({"error": "lat and lon query params are required"}), 400
 
         servers = get_servers_near(user_lat, user_lon)
         return jsonify({"servers": servers})
