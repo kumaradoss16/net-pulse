@@ -32,20 +32,9 @@ def sanitize_server(server):
 
 
 def get_public_ip():
-    services = [
-        "https://api.ipify.org?format=json",
-        "https://api.my-ip.io/ip.json",
-        "https://ipinfo.io/json",
-    ]
-    for url in services:
-        try:
-            with urllib.request.urlopen(url, timeout=5) as res:
-                data = json.loads(res.read().decode())
-                ip = data.get("ip") or data.get("query")
-                if ip:
-                    return ip
-        except Exception:
-            continue
+    # NOTE: This is intentionally left as a stub.
+    # The real user IP is now fetched client-side in script.js
+    # directly from ipinfo.io to avoid returning the server's IP.
     return "Unavailable"
 
 
@@ -244,13 +233,28 @@ def index():
 
 @app.route("/get-ip")
 def get_ip():
-    return jsonify({"ip": get_public_ip()})
+    # On Render (and most proxied hosts), the real client IP is in X-Forwarded-For.
+    # The leftmost address is the original client — not the server.
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    real_ip = forwarded.split(",")[0].strip() if forwarded else request.remote_addr
+    return jsonify({"ip": real_ip or "Unavailable"})
 
 
 @app.route("/get-geoip")
 def get_geoip():
+    # Accept the real client IP passed from the browser as ?ip=X.X.X.X
+    # This way ipinfo.io is queried for the USER's IP, not the server's.
+    client_ip = request.args.get("ip", "").strip()
+
+    # Also try X-Forwarded-For as a fallback source
+    if not client_ip:
+        forwarded = request.headers.get("X-Forwarded-For", "")
+        client_ip = forwarded.split(",")[0].strip() if forwarded else ""
+
     try:
-        with urllib.request.urlopen("https://ipinfo.io/json", timeout=6) as res:
+        # Query ipinfo.io for the specific client IP (empty string = server IP, so we always pass it)
+        url = f"https://ipinfo.io/{client_ip}/json" if client_ip else "https://ipinfo.io/json"
+        with urllib.request.urlopen(url, timeout=6) as res:
             data = json.loads(res.read().decode())
         return jsonify({
             "ip":       data.get("ip",       "N/A"),
