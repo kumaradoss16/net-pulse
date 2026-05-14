@@ -6,7 +6,6 @@ import math
 import threading
 import datetime
 import urllib.request
-
 from flask import Flask, render_template, Response, jsonify, request
 from flask_socketio import SocketIO, emit
 import speedtest
@@ -14,7 +13,6 @@ import psutil
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "netpulse-dev-key")
-
 socketio = SocketIO(
     app,
     cors_allowed_origins="*",
@@ -25,7 +23,8 @@ socketio = SocketIO(
 
 connected_clients = {}
 
-# ── Helpers ────────────────────────────────────────────────
+
+# ── Helpers ────────────────────────────────────────────────────────────────────
 
 def sanitize_server(server):
     return {k: v.strip() if isinstance(v, str) else v for k, v in server.items()}
@@ -67,20 +66,23 @@ def haversine(lat1, lon1, lat2, lon2):
     R = 6371
     d_lat = math.radians(lat2 - lat1)
     d_lon = math.radians(lon2 - lon1)
-    a = (math.sin(d_lat / 2) ** 2 +
-         math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) *
-         math.sin(d_lon / 2) ** 2)
+    a = (
+        math.sin(d_lat / 2) ** 2
+        + math.cos(math.radians(lat1))
+        * math.cos(math.radians(lat2))
+        * math.sin(d_lon / 2) ** 2
+    )
     return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
 def get_servers_near(user_lat, user_lon):
     """
-    Fetch ALL speedtest.net servers and sort by distance from
-    the user's actual lat/lon — not the server machine's location.
+    Fetch ALL speedtest.net servers and sort purely by haversine distance
+    from the USER's real lat/lon — NOT from the Render/server machine location.
+    The speedtest library fetches the full global list; we rank it ourselves.
     """
     st = get_speedtest_instance()
-    st.get_servers()   # loads full server list
-
+    st.get_servers()          # loads the full worldwide server list
     results = []
     for dist_list in st.servers.values():
         for s in dist_list:
@@ -100,7 +102,6 @@ def get_servers_near(user_lat, user_lon):
                 "lat":      str(s.get("lat",     "")).strip(),
                 "lon":      str(s.get("lon",     "")).strip(),
             })
-
     results.sort(key=lambda x: x["distance"])
     return results[:12]
 
@@ -118,9 +119,11 @@ def get_system_stats():
     }
 
 
-# ── Background broadcaster ─────────────────────────────────
+# ── Background broadcaster ─────────────────────────────────────────────────────
+
 _broadcast_thread = None
 _broadcast_lock   = threading.Lock()
+
 
 def broadcast_loop():
     prev_net = psutil.net_io_counters()
@@ -139,7 +142,7 @@ def broadcast_loop():
         socketio.emit("live_stats", stats, namespace="/ws")
 
 
-# ── WebSocket events ───────────────────────────────────────
+# ── WebSocket events ───────────────────────────────────────────────────────────
 
 @socketio.on("connect", namespace="/ws")
 def ws_connect():
@@ -197,16 +200,14 @@ def ws_speedtest(data):
                 st.get_servers([int(server_id)])
             st.get_best_server()
             st.results.server = sanitize_server(st.results.server)
-
             server       = st.results.server
             server_label = f"{server.get('name','Unknown')}, {server.get('country','')}"
-
             push({
                 "stage":    "server",
                 "status":   "Connected",
                 "server":   server_label,
                 "sponsor":  server.get("sponsor", ""),
-                "host":     server.get("host",    ""),
+                "host":     server.get("host", ""),
                 "distance": round(server.get("d", 0), 1),
                 "country":  server.get("country", ""),
             })
@@ -229,13 +230,13 @@ def ws_speedtest(data):
             push({"stage": "complete", "ping": ping, "download": download, "upload": upload})
 
         except Exception as e:
-            clean_msg = str(e).replace('\t', '').replace('\n', '').strip()
+            clean_msg = str(e).replace("\t", "").replace("\n", "").strip()
             push({"stage": "error", "message": clean_msg})
 
     socketio.start_background_task(run)
 
 
-# ── HTTP Routes ────────────────────────────────────────────
+# ── HTTP Routes ────────────────────────────────────────────────────────────────
 
 @app.route("/")
 def index():
@@ -252,43 +253,46 @@ def get_geoip():
     try:
         with urllib.request.urlopen("https://ipinfo.io/json", timeout=6) as res:
             data = json.loads(res.read().decode())
-        return jsonify({
-            "ip":       data.get("ip",       "N/A"),
-            "isp":      data.get("org",      "N/A"),
-            "city":     data.get("city",     "N/A"),
-            "region":   data.get("region",   "N/A"),
-            "country":  data.get("country",  "N/A"),
-            "loc":      data.get("loc",      "N/A"),
-            "timezone": data.get("timezone", "N/A"),
-            "hostname": data.get("hostname", "N/A"),
-        })
+            return jsonify({
+                "ip":       data.get("ip",       "N/A"),
+                "isp":      data.get("org",       "N/A"),
+                "city":     data.get("city",      "N/A"),
+                "region":   data.get("region",    "N/A"),
+                "country":  data.get("country",   "N/A"),
+                "loc":      data.get("loc",       "N/A"),
+                "timezone": data.get("timezone",  "N/A"),
+                "hostname": data.get("hostname",  "N/A"),
+            })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
 @app.route("/get-servers")
 def get_servers():
+    """
+    FIX: Always require lat/lon from the browser (user's real coords).
+    NEVER fall back to calling ipinfo.io from Flask — that would return
+    the Render server's US location (Virginia) instead of the user's location.
+    """
     try:
         lat_param = request.args.get("lat")
         lon_param = request.args.get("lon")
-
         if lat_param and lon_param:
             user_lat = float(lat_param)
             user_lon = float(lon_param)
         else:
-            # FIX: Never call ipinfo.io from Flask — it returns Render's US location (Virginia)
-            # Browser must always send lat/lon. Return 400 so the JS shows a proper message.
-            return jsonify({"error": "lat and lon query params are required"}), 400
-
+            return jsonify({"error": "lat and lon query params are required — send your browser coords"}), 400
         servers = get_servers_near(user_lat, user_lon)
         return jsonify({"servers": servers})
-
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+
 limiter = Limiter(get_remote_address, app=app, default_limits=["5 per minute"])
+
 
 @app.route("/run-speedtest")
 @limiter.limit("3 per minute")
@@ -298,18 +302,13 @@ def run_speedtest_sse():
     def generate():
         try:
             yield f"data: {json.dumps({'stage': 'server', 'status': 'Connecting to server…'})}\n\n"
-
             st = get_speedtest_instance()
-
             if server_id:
                 st.get_servers([int(server_id)])
-
             st.get_best_server()
             st.results.server = sanitize_server(st.results.server)
-
             server       = st.results.server
             server_label = f"{server.get('name','Unknown')}, {server.get('country','')}"
-
             yield f"data: {json.dumps({'stage': 'server', 'status': 'Connected', 'server': server_label, 'sponsor': server.get('sponsor',''), 'host': server.get('host',''), 'distance': round(server.get('d',0),1), 'country': server.get('country','')})}\n\n"
             time.sleep(0.3)
 
@@ -338,17 +337,17 @@ def run_speedtest_sse():
         except ssl.SSLError as e:
             yield f"data: {json.dumps({'stage': 'error', 'message': f'SSL error: {str(e).strip()}'})}\n\n"
         except Exception as e:
-            clean_msg = str(e).replace('\t', '').replace('\n', '').strip()
+            clean_msg = str(e).replace("\t", "").replace("\n", "").strip()
             yield f"data: {json.dumps({'stage': 'error', 'message': clean_msg})}\n\n"
 
     return Response(
         generate(),
         mimetype="text/event-stream",
         headers={
-            "Cache-Control":               "no-cache",
-            "X-Accel-Buffering":           "no",
+            "Cache-Control":          "no-cache",
+            "X-Accel-Buffering":      "no",
             "Access-Control-Allow-Origin": "*",
-        }
+        },
     )
 
 
