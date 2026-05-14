@@ -19,35 +19,14 @@ document.addEventListener("DOMContentLoaded", () => {
         const text = el.dataset.text || "DevSpireHub";
         let i = 0;
         let isDeleting = false;
-
-        const typeSpeed = 100;    // typing speed (ms)
-        const deleteSpeed = 50;   // deleting speed (ms)
-        const pauseTime = 2000;   // pause at end before deleting (ms)
-        const restartPause = 500; // pause before restarting (ms)
-
+        const typeSpeed = 100, deleteSpeed = 50, pauseTime = 2000, restartPause = 500;
         function typeLoop() {
-            const currentText = text.slice(0, i);
-            el.textContent = currentText;
-
-            if (!isDeleting && i < text.length) {
-                // Typing forward
-                i++;
-                setTimeout(typeLoop, typeSpeed);
-            } else if (!isDeleting && i === text.length) {
-                // Finished typing, pause then start deleting
-                isDeleting = true;
-                setTimeout(typeLoop, pauseTime);
-            } else if (isDeleting && i > 0) {
-                // Deleting
-                i--;
-                setTimeout(typeLoop, deleteSpeed);
-            } else if (isDeleting && i === 0) {
-                // Finished deleting, restart
-                isDeleting = false;
-                setTimeout(typeLoop, restartPause);
-            }
+            el.textContent = text.slice(0, i);
+            if (!isDeleting && i < text.length) { i++; setTimeout(typeLoop, typeSpeed); }
+            else if (!isDeleting && i === text.length) { isDeleting = true; setTimeout(typeLoop, pauseTime); }
+            else if (isDeleting && i > 0) { i--; setTimeout(typeLoop, deleteSpeed); }
+            else { isDeleting = false; setTimeout(typeLoop, restartPause); }
         }
-
         typeLoop();
     })();
 });
@@ -93,7 +72,9 @@ function draw(val) {
     ctx.beginPath(); ctx.arc(CX, CY, 12, 0, Math.PI * 2); ctx.fillStyle = pg; ctx.fill();
     ctx.beginPath(); ctx.arc(CX, CY, 12, 0, Math.PI * 2); ctx.strokeStyle = "#22d3ee20"; ctx.lineWidth = 1; ctx.stroke();
     ctx.beginPath(); ctx.arc(CX, CY, 2.5, 0, Math.PI * 2); ctx.fillStyle = "#22d3ee"; ctx.fill();
-    document.getElementById("dr-val").textContent = Math.round(val);
+    // ✅ FIX 1: null-guard so a missing #dr-val never crashes and kills all JS below
+    const drVal = document.getElementById("dr-val");
+    if (drVal) drVal.textContent = Math.round(val);
 }
 
 /* Needle physics */
@@ -108,7 +89,7 @@ const loop = () => { if (!raf) raf = requestAnimationFrame(tick); };
 const nSet = (v) => { md = "spring"; tgt = Math.min(v, MAX); loop(); };
 const nWob = (c) => { md = "wobble"; wcl = Math.min(c, MAX); wc = pos; ph = 0; vel *= 0.4; loop(); };
 const nRst = () => { md = "spring"; tgt = 0; loop(); };
-draw(0);
+// ✅ FIX 1 (cont): draw(0) removed from here — moved to bottom init block
 
 /* ══ Loading bars ══ */
 let lbInt = null;
@@ -129,6 +110,10 @@ function hideAllLB() {
     ["dl", "ul"].forEach(t => { document.getElementById(`lb-${t}`).classList.add("hidden"); document.getElementById(`lb-${t}-fill`).style.width = "0%"; document.getElementById(`lb-${t}-pct`).textContent = "0%"; });
 }
 
+// ✅ FIX 3: Declared BEFORE fetchGeoIP — let is not hoisted, so writing _userLat inside
+//           fetchGeoIP was silently failing when this was declared after the function
+let _userLat = null, _userLon = null;
+
 /* ══ GeoIP ══ */
 async function fetchGeoIP() {
     const badge = document.getElementById("geo-badge"); badge.textContent = "Loading";
@@ -136,31 +121,37 @@ async function fetchGeoIP() {
     try {
         // Call ipinfo.io directly from BROWSER — returns USER's real location, not Render's
         const res = await fetch("https://ipinfo.io/json"), d = await res.json();
-        
+        if (d.error) throw new Error(d.error);
+
         // Cache lat/lon for fetchServers()
         if (d.loc) {
             const parts = d.loc.split(",");
             _userLat = parseFloat(parts[0]);
             _userLon = parseFloat(parts[1]);
         }
-        if (d.error) throw new Error(d.error);
-        const isp = d.isp.replace(/^AS\d+\s+/, "");
+
+        // ✅ FIX 2: ipinfo.io returns "org" field, NOT "isp" — d.isp was undefined,
+        //           calling .replace() on undefined threw TypeError → catch → "Unavailable"
+        const isp = (d.org || "").replace(/^AS\d+\s+/, "");
+
         function set(id, v) { const el = document.getElementById(id); el.textContent = v || "—"; el.className = "geo-val"; }
-        set("geo-isp", isp); set("geo-loc", d.city); set("geo-country", `${d.country} — ${d.region}`); set("geo-tz", d.timezone); set("geo-host", d.hostname !== "N/A" ? d.hostname : d.ip);
+        set("geo-isp", isp);
+        set("geo-loc", d.city);
+        set("geo-country", `${d.country} — ${d.region}`);
+        set("geo-tz", d.timezone);
+        set("geo-host", d.hostname || d.ip);
         badge.textContent = "Live";
         document.getElementById("conn-ip").textContent = d.ip || "—";
         document.getElementById("conn-ip").classList.add("hi");
         const chip = document.getElementById("ip-chip"); chip.textContent = d.ip; chip.className = "chip live";
     } catch {
         badge.textContent = "Error";
-        ["geo-isp", "geo-loc", "geo-country", "geo-tz", "geo-host"].forEach(id => { const el = document.getElementById(id); el.textContent = "Unavailable"; });
+        ["geo-isp", "geo-loc", "geo-country", "geo-tz", "geo-host"].forEach(id => { document.getElementById(id).textContent = "Unavailable"; });
     }
 }
 
 /* ══ Server selection ══ */
 let selSrvId = null;
-// Cache user's real lat/lon from browser — reused in fetchServers()
-let _userLat = null, _userLon = null;
 
 function selectAuto() {
     selSrvId = null;
@@ -173,9 +164,9 @@ async function fetchServers() {
     const btn = document.getElementById("srv-fetch-btn"), list = document.getElementById("srv-list");
     const dd = document.getElementById("srv-dropdown");
     btn.disabled = true; btn.textContent = "Loading…";
-    list.innerHTML = `<div class="srv-empty"><span class="spin"></span> Fetching…</div>`;
+    list.innerHTML = `<div class="srv-empty"><span class="spin"></span> Fetching nearby servers…</div>`;
     try {
-        // Step 1: Get user's real coords — use cached value or re-fetch
+        // Use cached lat/lon from fetchGeoIP(), or re-fetch from browser if not ready yet
         let lat = _userLat, lon = _userLon;
         if (lat === null || lon === null) {
             try {
@@ -189,16 +180,16 @@ async function fetchServers() {
                 }
             } catch {}
         }
-        
-        // Step 2: Pass USER's lat/lon to Flask — sorts servers near user, not Render datacenter
+
+        // Send USER's lat/lon to Flask — haversine() now sorts by distance from user, not Render
         const url = (lat !== null && lon !== null)
             ? `/get-servers?lat=${lat}&lon=${lon}`
             : `/get-servers`;
-        
+
         const res = await fetch(url), d = await res.json();
         if (d.error) throw new Error(d.error);
         const srvs = d.servers;
-        /* populate panel list */
+
         list.innerHTML = srvs.map(s => `
 <div class="srv-row ${selSrvId == s.id ? 'active' : ''}" onclick="pickSrv('${s.id}','${esc(s.name)}','${esc(s.country)}',this)">
 <div class="srv-radio"></div>
@@ -208,8 +199,9 @@ async function fetchServers() {
 </div>
 <div class="srv-km">${s.distance} km</div>
 </div>`).join("");
-        /* populate inline dropdown */
-        dd.innerHTML = `<option value="">Auto — Best Server</option>` + srvs.map(s => `<option value="${s.id}">${s.name}, ${s.country} (${s.distance} km)</option>`).join("");
+
+        dd.innerHTML = `<option value="">Auto — Best Server</option>` +
+            srvs.map(s => `<option value="${s.id}">${s.name}, ${s.country} (${s.distance} km)</option>`).join("");
     } catch (e) { list.innerHTML = `<div class="srv-empty">${e.message}</div>`; }
     finally { btn.disabled = false; btn.textContent = "Fetch Nearby Servers"; }
 }
@@ -222,7 +214,6 @@ function pickSrv(id, name, country, el) {
     document.getElementById("srv-dropdown").value = id;
 }
 
-/* Sync dropdown change → panel selection */
 document.getElementById("srv-dropdown").addEventListener("change", function () {
     selSrvId = this.value || null;
     document.querySelectorAll(".srv-row").forEach(e => e.classList.remove("active"));
@@ -238,11 +229,8 @@ function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").
 /* ══ Public IP ══ */
 (async function () {
     try {
-        // AFTER — call ipinfo.io directly from browser → returns USER's location, not Render's
         const res = await fetch("https://ipinfo.io/json");
         const d = await res.json();
-        
-        // Cache coordinates for fetchServers()
         if (d.loc) {
             const parts = d.loc.split(",");
             _userLat = parseFloat(parts[0]);
@@ -338,7 +326,6 @@ function resetUI() {
 
 function startTest() {
     const btn = document.getElementById("btn");
-    /* Check inline dropdown first, else panel selection */
     const dd = document.getElementById("srv-dropdown");
     if (dd.value) selSrvId = dd.value;
     btn.disabled = true; btn.textContent = "Testing…";
@@ -387,10 +374,11 @@ function startTest() {
                 hideAllLB(); nRst(); setStage("Error"); setStatus(d.message); setDot(false); btn.disabled = false; btn.textContent = "Start Test"; es.close(); break;
         }
     };
-    es.onerror = () => { hideAllLB(); nRst(); setDot(false); setStatus("Connection error — check Flask on port 8080"); setStage("Error"); btn.disabled = false; btn.textContent = "Start Test"; es.close(); };
+    es.onerror = () => { hideAllLB(); nRst(); setDot(false); setStatus("Connection error — retry"); setStage("Error"); btn.disabled = false; btn.textContent = "Start Test"; es.close(); };
 }
 
-/* Init */
+/* ══ Init — runs after full DOM is parsed ══ */
 renderHist();
 renderChart();
 fetchGeoIP();
+draw(0); // ✅ FIX 1: moved here — guarantees #dr-val and canvas exist before first paint
