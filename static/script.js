@@ -72,7 +72,6 @@ function draw(val) {
     ctx.beginPath(); ctx.arc(CX, CY, 12, 0, Math.PI * 2); ctx.fillStyle = pg; ctx.fill();
     ctx.beginPath(); ctx.arc(CX, CY, 12, 0, Math.PI * 2); ctx.strokeStyle = "#22d3ee20"; ctx.lineWidth = 1; ctx.stroke();
     ctx.beginPath(); ctx.arc(CX, CY, 2.5, 0, Math.PI * 2); ctx.fillStyle = "#22d3ee"; ctx.fill();
-    // ✅ FIX 1: null-guard so a missing #dr-val never crashes and kills all JS below
     const drVal = document.getElementById("dr-val");
     if (drVal) drVal.textContent = Math.round(val);
 }
@@ -89,7 +88,6 @@ const loop = () => { if (!raf) raf = requestAnimationFrame(tick); };
 const nSet = (v) => { md = "spring"; tgt = Math.min(v, MAX); loop(); };
 const nWob = (c) => { md = "wobble"; wcl = Math.min(c, MAX); wc = pos; ph = 0; vel *= 0.4; loop(); };
 const nRst = () => { md = "spring"; tgt = 0; loop(); };
-// ✅ FIX 1 (cont): draw(0) removed from here — moved to bottom init block
 
 /* ══ Loading bars ══ */
 let lbInt = null;
@@ -110,8 +108,7 @@ function hideAllLB() {
     ["dl", "ul"].forEach(t => { document.getElementById(`lb-${t}`).classList.add("hidden"); document.getElementById(`lb-${t}-fill`).style.width = "0%"; document.getElementById(`lb-${t}-pct`).textContent = "0%"; });
 }
 
-// ✅ FIX 3: Declared BEFORE fetchGeoIP — let is not hoisted, so writing _userLat inside
-//           fetchGeoIP was silently failing when this was declared after the function
+// ✅ FIX 3: Declared BEFORE fetchGeoIP to avoid let hoisting issues
 let _userLat = null, _userLon = null;
 
 /* ══ GeoIP ══ */
@@ -119,19 +116,18 @@ async function fetchGeoIP() {
     const badge = document.getElementById("geo-badge"); badge.textContent = "Loading";
     ["geo-isp", "geo-loc", "geo-country", "geo-tz", "geo-host"].forEach(id => { const el = document.getElementById(id); el.textContent = "—"; el.className = "geo-val loading"; });
     try {
-        // Call ipinfo.io directly from BROWSER — returns USER's real location, not Render's
+        // Fetch directly from browser — ipinfo returns USER's IP, not Render server's IP
         const res = await fetch("https://ipinfo.io/json"), d = await res.json();
         if (d.error) throw new Error(d.error);
 
-        // Cache lat/lon for fetchServers()
+        // Cache lat/lon FIRST before anything else
         if (d.loc) {
             const parts = d.loc.split(",");
             _userLat = parseFloat(parts[0]);
             _userLon = parseFloat(parts[1]);
         }
 
-        // ✅ FIX 2: ipinfo.io returns "org" field, NOT "isp" — d.isp was undefined,
-        //           calling .replace() on undefined threw TypeError → catch → "Unavailable"
+        // ✅ FIX 2: ipinfo returns "org" not "isp" — d.isp is undefined → TypeError → catch
         const isp = (d.org || "").replace(/^AS\d+\s+/, "");
 
         function set(id, v) { const el = document.getElementById(id); el.textContent = v || "—"; el.className = "geo-val"; }
@@ -144,6 +140,13 @@ async function fetchGeoIP() {
         document.getElementById("conn-ip").textContent = d.ip || "—";
         document.getElementById("conn-ip").classList.add("hi");
         const chip = document.getElementById("ip-chip"); chip.textContent = d.ip; chip.className = "chip live";
+
+        // ✅ FIX RACE CONDITION: Auto-load servers NOW that we have real user lat/lon
+        // This guarantees fetchServers() always has coords — no more US fallback
+        if (_userLat !== null && _userLon !== null) {
+            fetchServers();
+        }
+
     } catch {
         badge.textContent = "Error";
         ["geo-isp", "geo-loc", "geo-country", "geo-tz", "geo-host"].forEach(id => { document.getElementById(id).textContent = "Unavailable"; });
@@ -166,11 +169,12 @@ async function fetchServers() {
     btn.disabled = true; btn.textContent = "Loading…";
     list.innerHTML = `<div class="srv-empty"><span class="spin"></span> Fetching nearby servers…</div>`;
     try {
-        // Use cached lat/lon from fetchGeoIP(), or re-fetch from browser if not ready yet
         let lat = _userLat, lon = _userLon;
+
+        // If coords not cached yet, re-fetch from browser (never from Flask/Render)
         if (lat === null || lon === null) {
             try {
-                const geoRes  = await fetch("https://ipinfo.io/json");
+                const geoRes = await fetch("https://ipinfo.io/json");
                 const geoData = await geoRes.json();
                 if (geoData.loc) {
                     const parts = geoData.loc.split(",");
@@ -181,12 +185,16 @@ async function fetchServers() {
             } catch {}
         }
 
-        // Send USER's lat/lon to Flask — haversine() now sorts by distance from user, not Render
-        const url = (lat !== null && lon !== null)
-            ? `/get-servers?lat=${lat}&lon=${lon}`
-            : `/get-servers`;
+        // ✅ FIX SERVER BUG: Never call /get-servers without coords
+        // Without this guard, Flask falls back to calling ipinfo.io from Render (US) → US servers
+        if (lat === null || lon === null) {
+            list.innerHTML = `<div class="srv-empty">Unable to detect location — please retry</div>`;
+            btn.disabled = false; btn.textContent = "Fetch Nearby Servers";
+            return;
+        }
 
-        const res = await fetch(url), d = await res.json();
+        // Always send USER's lat/lon — Flask haversine() sorts near user (Puducherry), not Render (Virginia)
+        const res = await fetch(`/get-servers?lat=${lat}&lon=${lon}`), d = await res.json();
         if (d.error) throw new Error(d.error);
         const srvs = d.servers;
 
@@ -231,7 +239,7 @@ function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").
     try {
         const res = await fetch("https://ipinfo.io/json");
         const d = await res.json();
-        if (d.loc) {
+        if (d.loc && _userLat === null) {
             const parts = d.loc.split(",");
             _userLat = parseFloat(parts[0]);
             _userLon = parseFloat(parts[1]);
@@ -377,8 +385,8 @@ function startTest() {
     es.onerror = () => { hideAllLB(); nRst(); setDot(false); setStatus("Connection error — retry"); setStage("Error"); btn.disabled = false; btn.textContent = "Start Test"; es.close(); };
 }
 
-/* ══ Init — runs after full DOM is parsed ══ */
+/* ══ Init ══ */
 renderHist();
 renderChart();
-fetchGeoIP();
-draw(0); // ✅ FIX 1: moved here — guarantees #dr-val and canvas exist before first paint
+fetchGeoIP(); // fetchServers() is called automatically inside fetchGeoIP() once lat/lon is ready
+draw(0);
