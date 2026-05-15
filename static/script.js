@@ -142,13 +142,25 @@ async function measureDownload(onTick) {
   return round2((total * 8) / (elapsed * 1_000_000));
 }
 
+// crypto.getRandomValues max = 65536 bytes per call — chunk it
+function makeRandomPayload(bytes) {
+  const CHUNK = 65536;
+  const buf   = new Uint8Array(bytes);
+  for (let offset = 0; offset < bytes; offset += CHUNK) {
+    const len   = Math.min(CHUNK, bytes - offset);
+    const slice = new Uint8Array(buf.buffer, offset, len);
+    crypto.getRandomValues(slice);
+  }
+  return buf;
+}
+
 // ── Upload Engine ────────────────────────────────────────────────────────────
 async function measureUpload(onTick) {
   const win       = makeWindow();
   const startTime = performance.now();
   const deadline  = startTime + CFG.UL_DURATION;
   let   total     = 0;
-  const payload   = crypto.getRandomValues(new Uint8Array(CFG.UL_BYTES));
+  const payload = makeRandomPayload(CFG.UL_BYTES);
   const ctrl      = Array.from({ length: CFG.UL_STREAMS }, () => new AbortController());
 
   await Promise.allSettled(
