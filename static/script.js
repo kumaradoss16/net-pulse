@@ -277,26 +277,29 @@ async function fetchGeoIP() {
 }
 
 // ── Cloudflare Speedtest Engine ───────────────────────────────────────────────
-// Uses @cloudflare/speedtest npm package (loaded via unpkg CDN in index.html).
-// Automatically routes to the nearest Cloudflare PoP via Anycast.
-// API docs: https://github.com/cloudflare/speedtest
+// @cloudflare/speedtest is an ES module — must be imported, not loaded as a
+// plain <script>. We use a dynamic import() so no build step is needed.
 let isRunning = false;
 let _engine   = null;
+let _SpeedTest = null;  // will hold the imported class
+
+async function loadEngine() {
+  if (_SpeedTest) return _SpeedTest;
+  setStatus('Loading engine…', 0);
+  try {
+    // ESM CDN import — exposes the SpeedTest class directly
+    const mod = await import('https://unpkg.com/@cloudflare/speedtest@latest/dist/index.js');
+    // Package exports default or named SpeedTest
+    _SpeedTest = mod.SpeedTest || mod.default || Object.values(mod)[0];
+    if (!_SpeedTest) throw new Error('SpeedTest class not found in module exports');
+  } catch (err) {
+    throw new Error(`Failed to load engine: ${err.message}`);
+  }
+  return _SpeedTest;
+}
 
 async function startTest() {
   if (isRunning) return;
-
-  // Ensure @cloudflare/speedtest is loaded
-  if (typeof SpeedTest === 'undefined') {
-    setStatus('Loading engine…', 0);
-    await new Promise((res, rej) => {
-      const s = document.createElement('script');
-      s.src = 'https://unpkg.com/@cloudflare/speedtest@latest/dist/index.js';
-      s.onload = res; s.onerror = rej;
-      document.head.appendChild(s);
-    });
-    await new Promise(r => setTimeout(r, 300));
-  }
 
   isRunning = true;
   const btn = $('btn');
@@ -316,55 +319,44 @@ async function startTest() {
   let lastDl = 0, lastUl = 0, lastPing = 0, lastJitter = 0;
 
   try {
+    const SpeedTestClass = await loadEngine();
+
     await new Promise((resolve, reject) => {
-      // If a previous engine exists, clean it up
       if (_engine) { try { _engine.pause(); } catch(_){} _engine = null; }
 
-      _engine = new SpeedTest({ autoStart: false });
+      _engine = new SpeedTestClass({ autoStart: false });
 
-      // ── Live results as measurements complete ──────────────────────────────
-      _engine.onResultsChange = ({ type }) => {
+      _engine.onResultsChange = () => {
         const r = _engine.results;
 
-        // Ping / latency
         const ping   = r.getUnloadedLatency();
         const jitter = r.getUnloadedJitter();
-        if (ping   != null) { lastPing   = round2(ping);   setVal('sv-ping', lastPing); highlightCard('sc-ping'); }
+        if (ping   != null) { lastPing   = round2(ping);   setVal('sv-ping', lastPing);   highlightCard('sc-ping'); }
         if (jitter != null) { lastJitter = round2(jitter); setVal('sb-ping', `Jitter ${lastJitter} ms`); }
 
-        // Download
         const dlBps = r.getDownloadBandwidth();
         if (dlBps != null) {
           const dl = bpsToMbps(dlBps);
           if (dl > 0) {
             lastDl = dl;
-            setVal('sv-dl', dl);
-            setVal('sb-dl', `${dl} Mbps`);
-            Gauge.set(dl);
-            LiveChart.push(dl);
+            setVal('sv-dl', dl); setVal('sb-dl', `${dl} Mbps`);
+            Gauge.set(dl); LiveChart.push(dl);
             highlightCard('sc-dl');
-
-            // Approximate progress 20–65%
             const pts = r.getDownloadBandwidthPoints() || [];
-            const pct = Math.min(20 + pts.length * 3, 65);
             setLoadBar('dl', Math.min((pts.length / 14) * 100, 99));
-            setStatus(`Download: ${dl} Mbps`, pct);
+            setStatus(`Download: ${dl} Mbps`, Math.min(20 + pts.length * 3, 65));
             setStage('Download');
           }
         }
 
-        // Upload
         const ulBps = r.getUploadBandwidth();
         if (ulBps != null) {
           const ul = bpsToMbps(ulBps);
           if (ul > 0) {
             lastUl = ul;
-            setVal('sv-ul', ul);
-            setVal('sb-ul', `${ul} Mbps`);
-            Gauge.set(ul);
-            LiveChart.push(ul);
+            setVal('sv-ul', ul); setVal('sb-ul', `${ul} Mbps`);
+            Gauge.set(ul); LiveChart.push(ul);
             highlightCard('sc-ul');
-
             const pts = r.getUploadBandwidthPoints() || [];
             setLoadBar('ul', Math.min((pts.length / 10) * 100, 99));
             setStatus(`Upload: ${ul} Mbps`, Math.min(65 + pts.length * 3, 97));
@@ -373,23 +365,16 @@ async function startTest() {
         }
       };
 
-      // ── All measurements done ──────────────────────────────────────────────
       _engine.onFinish = (results) => {
-        const summary = results.getSummary();
-
         const download = bpsToMbps(results.getDownloadBandwidth()) || lastDl;
         const upload   = bpsToMbps(results.getUploadBandwidth())   || lastUl;
         const ping     = round2(results.getUnloadedLatency())      || lastPing;
         const jitter   = round2(results.getUnloadedJitter())       || lastJitter;
 
-        // Final values
-        setVal('sv-dl',  download); setVal('sb-dl',  `${download} Mbps`);
-        setVal('sv-ul',  upload);   setVal('sb-ul',  `${upload} Mbps`);
-        setVal('sv-ping', ping);    setVal('sb-ping', `Jitter ${jitter} ms`);
-
-        // Finish bars
-        setLoadBar('dl', 100);
-        setLoadBar('ul', 100);
+        setVal('sv-dl',   download); setVal('sb-dl',   `${download} Mbps`);
+        setVal('sv-ul',   upload);   setVal('sb-ul',   `${upload} Mbps`);
+        setVal('sv-ping', ping);     setVal('sb-ping', `Jitter ${jitter} ms`);
+        setLoadBar('dl', 100); setLoadBar('ul', 100);
         Gauge.set(download);
 
         const score = qualityScore({ download, upload, ping, jitter });
@@ -398,27 +383,18 @@ async function startTest() {
         setStage('Complete');
         setDot('done');
 
-        // Fetch Cloudflare's PoP info from meta header
         fetchCFPop().then(pop => {
           const serverLabel = pop ? `Cloudflare ${pop} (nearest PoP)` : 'Cloudflare Edge (nearest PoP)';
           setVal('conn-server', serverLabel);
-
-          saveHistory({
-            download, upload, ping, jitter, score,
-            server: serverLabel,
-            time:   new Date().toLocaleTimeString(),
-          });
+          saveHistory({ download, upload, ping, jitter, score, server: serverLabel, time: new Date().toLocaleTimeString() });
           renderHistory();
         });
 
         resolve();
       };
 
-      _engine.onError = (err) => {
-        reject(new Error(err));
-      };
+      _engine.onError = (err) => reject(new Error(String(err)));
 
-      // Start!
       _engine.play();
     });
 
@@ -432,23 +408,18 @@ async function startTest() {
   }
 }
 
-// ── Fetch Cloudflare PoP identifier from speed.cloudflare.com/meta ───────────
-// Returns e.g. "MAA" (Chennai), "BOM" (Mumbai), "SIN" (Singapore)
-// This tells the user which Cloudflare data centre they were routed to.
+// ── Cloudflare PoP from /meta ─────────────────────────────────────────────────
 async function fetchCFPop() {
   try {
     const r = await fetch('https://speed.cloudflare.com/meta', { cache: 'no-store' });
     const d = await r.json();
-    // Response: { colo: "MAA", city: "Chennai", country: "IN", ... }
     if (d.colo) {
       const city    = d.city    ? `, ${d.city}`    : '';
       const country = d.country ? ` (${d.country})`: '';
       return `${d.colo}${city}${country}`;
     }
     return null;
-  } catch (_) {
-    return null;
-  }
+  } catch (_) { return null; }
 }
 
 // ── Chart tab switcher ────────────────────────────────────────────────────────
@@ -463,9 +434,6 @@ document.addEventListener('DOMContentLoaded', () => {
   LiveChart.init();
   fetchGeoIP();
   renderHistory();
-
-  // Pre-load the Cloudflare speedtest engine in background so first click is instant
-  const s = document.createElement('script');
-  s.src = 'https://unpkg.com/@cloudflare/speedtest@latest/dist/index.js';
-  document.head.appendChild(s);
+  // Preload engine silently in background
+  loadEngine().catch(() => {});
 });
