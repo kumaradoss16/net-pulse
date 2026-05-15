@@ -286,15 +286,9 @@ let _SpeedTest = null;  // will hold the imported class
 async function loadEngine() {
   if (_SpeedTest) return _SpeedTest;
   setStatus('Loading engine…', 0);
-  try {
-    // ESM CDN import — exposes the SpeedTest class directly
-    const mod = await import('https://unpkg.com/@cloudflare/speedtest@latest/dist/index.js');
-    // Package exports default or named SpeedTest
-    _SpeedTest = mod.SpeedTest || mod.default || Object.values(mod)[0];
-    if (!_SpeedTest) throw new Error('SpeedTest class not found in module exports');
-  } catch (err) {
-    throw new Error(`Failed to load engine: ${err.message}`);
-  }
+  const mod = await import('https://unpkg.com/@cloudflare/speedtest@1.8.5/dist/speedtest.js');
+  _SpeedTest = mod.default;
+  if (!_SpeedTest) throw new Error('SpeedTest class not found');
   return _SpeedTest;
 }
 
