@@ -1,466 +1,558 @@
-document.addEventListener("DOMContentLoaded", () => {
-    const menuToggle = document.querySelector(".menu-toggle");
-    const navLinks = document.querySelector(".nav-links");
+/* ================================================================
+   NetPulse v3 — Client-Side Speed Test Engine
+   Architecture: Browser → Cloudflare Edge (nearest PoP via Anycast)
+   Zero backend bottleneck. No speedtest-cli. No server proxying.
+   ================================================================ */
 
-    menuToggle.addEventListener("click", () => {
-        navLinks.classList.toggle("active");
-        const icon = menuToggle.querySelector("i");
-        if (navLinks.classList.contains("active")) {
-            icon.classList.remove("fa-bars");
-            icon.classList.add("fa-times");
-        } else {
-            icon.classList.remove("fa-times");
-            icon.classList.add("fa-bars");
-        }
+'use strict';
+
+// ── Shared Math Utilities ───────────────────────────────────────────────────
+const avg    = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
+const round2 = v   => Math.round(v * 100) / 100;
+const sleep  = ms  => new Promise(r => setTimeout(r, ms));
+const stddev = arr => {
+  const m = avg(arr);
+  return Math.sqrt(avg(arr.map(v => (v - m) ** 2)));
+};
+
+// ── CDN Server Config ────────────────────────────────────────────────────────
+// speed.cloudflare.com uses Anycast — auto-routes every user to their
+// nearest Cloudflare PoP (300+ globally). Chennai → Cloudflare Chennai,
+// Frankfurt → Cloudflare Frankfurt, etc.
+const SERVER = {
+  id:    "cf-auto",
+  label: "Cloudflare Edge (nearest PoP)",
+  ping:  "https://speed.cloudflare.com/__down?bytes=0",
+  down:  "https://speed.cloudflare.com/__down?bytes=",
+  up:    "https://speed.cloudflare.com/__up",
+};
+
+const CFG = {
+  PING_ROUNDS:    5,
+  PROBE_TIMEOUT:  3000,
+  WARMUP_STREAMS: 2,
+  WARMUP_BYTES:   2  * 1024 * 1024,   // 2 MB per warmup stream
+  DL_STREAMS:     6,
+  DL_BYTES:       25 * 1024 * 1024,   // 25 MB per stream
+  DL_DURATION:    12000,              // ms
+  UL_STREAMS:     4,
+  UL_BYTES:       4  * 1024 * 1024,   // 4 MB per upload POST
+  UL_DURATION:    10000,
+  ROLLING_MS:     600,                // sliding window width
+  EMA_ALPHA:      0.3,                // smoothing factor
+  STAGGER_MS:     80,                 // stream launch delay
+};
+
+// ── Rolling Window + EMA Factory ────────────────────────────────────────────
+function makeWindow() {
+  const buf = [];
+  let ema = 0;
+  return {
+    reset() { buf.length = 0; ema = 0; },
+    push(bytes) {
+      const now = performance.now();
+      buf.push({ t: now, b: bytes });
+      // Prune entries older than rolling window
+      const cutoff = now - CFG.ROLLING_MS;
+      let i = 0;
+      while (i < buf.length && buf[i].t < cutoff) i++;
+      if (i) buf.splice(0, i);
+    },
+    mbps() {
+      if (buf.length < 2) return 0;
+      const total = buf.reduce((s, e) => s + e.b, 0);
+      const span  = (buf[buf.length - 1].t - buf[0].t) / 1000 || 0.001;
+      const raw   = (total * 8) / (span * 1_000_000);
+      // Exponential moving average for smooth gauge animation
+      ema = CFG.EMA_ALPHA * raw + (1 - CFG.EMA_ALPHA) * ema;
+      return round2(ema);
+    },
+  };
+}
+
+// ── Ping + Jitter ────────────────────────────────────────────────────────────
+async function measurePing() {
+  const samples = [];
+  for (let i = 0; i < CFG.PING_ROUNDS; i++) {
+    const ac  = new AbortController();
+    const tid = setTimeout(() => ac.abort(), CFG.PROBE_TIMEOUT);
+    const t0  = performance.now();
+    try {
+      await fetch(`${SERVER.ping}&t=${Date.now()}`, {
+        cache: 'no-store',
+        signal: ac.signal,
+      });
+      samples.push(performance.now() - t0);
+    } catch (_) {
+      samples.push(CFG.PROBE_TIMEOUT);
+    } finally {
+      clearTimeout(tid);
+    }
+    await sleep(100);
+  }
+  // Trim highest + lowest outlier
+  samples.sort((a, b) => a - b);
+  const trimmed = samples.slice(1, -1);
+  return {
+    ping:   round2(avg(trimmed)),
+    jitter: round2(stddev(trimmed)),
+  };
+}
+
+// ── Stream Helper (ReadableStream reader loop) ───────────────────────────────
+async function streamBytes(url, signal, onChunk) {
+  try {
+    const resp = await fetch(url, {
+      cache:   'no-store',
+      signal,
+      headers: { 'Cache-Control': 'no-store, no-cache' },
     });
+    if (!resp.ok || !resp.body) return;
+    const reader = resp.body.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done || !value) break;
+      onChunk(value.byteLength);  // bytes received from this chunk
+    }
+  } catch (_) {
+    // AbortError is expected and normal — silently ignore
+  }
+}
 
-    (function () {
-        const el = document.getElementById("brand");
-        const text = el.dataset.text || "DevSpireHub";
-        let i = 0;
-        let isDeleting = false;
+// ── Download Engine ──────────────────────────────────────────────────────────
+async function measureDownload(onTick) {
+  // Phase 1: Warmup — primes TCP slow-start, results discarded
+  const wCtrl = Array.from({ length: CFG.WARMUP_STREAMS }, () => new AbortController());
+  await Promise.allSettled(
+    wCtrl.map((ac, i) =>
+      sleep(i * CFG.STAGGER_MS).then(() =>
+        streamBytes(
+          `${SERVER.down}${CFG.WARMUP_BYTES}&r=${Date.now()}-${Math.random()}`,
+          ac.signal,
+          () => {}    // discard warmup bytes
+        )
+      )
+    )
+  );
 
-        const typeSpeed = 100;    // typing speed (ms)
-        const deleteSpeed = 50;   // deleting speed (ms)
-        const pauseTime = 2000;   // pause at end before deleting (ms)
-        const restartPause = 500; // pause before restarting (ms)
+  // Phase 2: Main download — 6 parallel 25MB streams
+  const win       = makeWindow();
+  const startTime = performance.now();
+  const deadline  = startTime + CFG.DL_DURATION;
+  let   total     = 0;
+  const ctrl      = Array.from({ length: CFG.DL_STREAMS }, () => new AbortController());
 
-        function typeLoop() {
-            const currentText = text.slice(0, i);
-            el.textContent = currentText;
-
-            if (!isDeleting && i < text.length) {
-                // Typing forward
-                i++;
-                setTimeout(typeLoop, typeSpeed);
-            } else if (!isDeleting && i === text.length) {
-                // Finished typing, pause then start deleting
-                isDeleting = true;
-                setTimeout(typeLoop, pauseTime);
-            } else if (isDeleting && i > 0) {
-                // Deleting
-                i--;
-                setTimeout(typeLoop, deleteSpeed);
-            } else if (isDeleting && i === 0) {
-                // Finished deleting, restart
-                isDeleting = false;
-                setTimeout(typeLoop, restartPause);
-            }
+  const streams = ctrl.map((ac, i) =>
+    sleep(i * CFG.STAGGER_MS).then(() =>
+      streamBytes(
+        `${SERVER.down}${CFG.DL_BYTES}&r=${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        ac.signal,
+        (bytes) => {
+          total += bytes;
+          win.push(bytes);
+          onTick(win.mbps());
+          // Hard-kill all streams when deadline reached
+          if (performance.now() >= deadline)
+            ctrl.forEach(c => { try { c.abort(); } catch(_){} });
         }
+      )
+    )
+  );
 
-        typeLoop();
-    })();
-});
-
-/* ══════════════════════════════════════════════════════
-    SPEEDOMETER
-══════════════════════════════════════════════════════ */
-const C = document.getElementById("speedo"), ctx = C.getContext("2d");
-const W = C.width, H = C.height, CX = W / 2, CY = H / 2, MAX = 200;
-const R_OUT = 120, R_IN = 97, R_T = 90, R_L = 77, R_G1 = 92, R_G2 = 80;
-const SEG = 120, GAP = 0.018;
-const A0 = (210 * Math.PI) / 180, AR = (300 * Math.PI) / 180;
-const vA = v => A0 + (Math.min(Math.max(v, 0), MAX) / MAX) * AR;
-
-function sCol(i, n, lit) {
-    const t = i / n; let r, g, b;
-    if (t < 0.33) { const p = t / 0.33; r = Math.round(248 + (34 - 248) * p); g = Math.round(113 + (211 - 113) * p); b = Math.round(113 + (238 - 113) * p); }
-    else if (t < 0.66) { const p = (t - 0.33) / 0.33; r = Math.round(34 + (129 - 34) * p); g = Math.round(211 + (140 - 211) * p); b = Math.round(238 + (248 - 238) * p); }
-    else { const p = (t - 0.66) / 0.34; r = Math.round(129 + (52 - 129) * p); g = Math.round(140 + (211 - 140) * p); b = Math.round(248 + (153 - 248) * p); }
-    return `rgba(${r},${g},${b},${lit ? 0.9 : 0.07})`;
-}
-const SEGS = Array.from({ length: SEG }, (_, i) => ({ a0: A0 + (i / SEG) * AR, a1: A0 + (i / SEG) * AR + (AR / SEG) - GAP }));
-const TICKS = [0, 50, 100, 150, 200].map(v => { const a = vA(v), ca = Math.cos(a), sa = Math.sin(a); return { v, ox: CX + R_T * ca, oy: CY + R_T * sa, ix: CX + (R_T - 9) * ca, iy: CY + (R_T - 9) * sa, lx: CX + R_L * ca, ly: CY + R_L * sa }; });
-
-function draw(val) {
-    ctx.clearRect(0, 0, W, H);
-    const lit = Math.round((val / MAX) * SEG);
-    SEGS.forEach(({ a0, a1 }, i) => { ctx.beginPath(); ctx.arc(CX, CY, R_OUT, a0, a1); ctx.arc(CX, CY, R_IN, a1, a0, true); ctx.closePath(); ctx.fillStyle = sCol(i, SEG, i < lit); ctx.fill(); });
-    const f = ctx.createRadialGradient(CX, CY, 0, CX, CY, R_IN); f.addColorStop(0, "#141414"); f.addColorStop(1, "#0e0e0e");
-    ctx.beginPath(); ctx.arc(CX, CY, R_IN - 2, 0, Math.PI * 2); ctx.fillStyle = f; ctx.fill();
-    if (val > 1) {
-        const ga = vA(val);
-        ctx.save(); ctx.shadowBlur = 16; ctx.shadowColor = "#22d3ee"; ctx.beginPath(); ctx.arc(CX, CY, R_G1, A0, ga); ctx.strokeStyle = "#22d3ee18"; ctx.lineWidth = 2.5; ctx.stroke(); ctx.restore();
-        ctx.save(); ctx.shadowBlur = 8; ctx.shadowColor = "#818cf8"; ctx.beginPath(); ctx.arc(CX, CY, R_G2, A0, ga); ctx.strokeStyle = "#818cf815"; ctx.lineWidth = 1.5; ctx.stroke(); ctx.restore();
-    }
-    TICKS.forEach(({ ox, oy, ix, iy, lx, ly, v }) => { ctx.beginPath(); ctx.moveTo(ox, oy); ctx.lineTo(ix, iy); ctx.strokeStyle = "#2a2a2a"; ctx.lineWidth = 1.5; ctx.lineCap = "round"; ctx.stroke(); ctx.font = "600 8px Inter,Segoe UI,sans-serif"; ctx.fillStyle = "#3f3f46"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(v, lx, ly); });
-    const na = vA(val), nt = R_IN - 7, ntl = 18, p2 = na + Math.PI / 2;
-    const tx = CX + nt * Math.cos(na), ty = CY + nt * Math.sin(na), bx = CX - ntl * Math.cos(na), by = CY - ntl * Math.sin(na);
-    const p1x = CX + 4 * Math.cos(p2), p1y = CY + 4 * Math.sin(p2), p2x = CX - 4 * Math.cos(p2), p2y = CY - 4 * Math.sin(p2);
-    ctx.save(); ctx.shadowBlur = 14; ctx.shadowColor = "#22d3ee"; ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(p1x, p1y); ctx.lineTo(bx, by); ctx.lineTo(p2x, p2y); ctx.closePath();
-    const ng = ctx.createLinearGradient(bx, by, tx, ty); ng.addColorStop(0, "#111111"); ng.addColorStop(0.5, "#22d3ee"); ng.addColorStop(1, "#e0f9ff"); ctx.fillStyle = ng; ctx.fill(); ctx.restore();
-    const pg = ctx.createRadialGradient(CX, CY, 0, CX, CY, 12); pg.addColorStop(0, "#ffffff14"); pg.addColorStop(0.35, "#22d3ee"); pg.addColorStop(0.7, "#0c3a4a"); pg.addColorStop(1, "#0a0a0a");
-    ctx.beginPath(); ctx.arc(CX, CY, 12, 0, Math.PI * 2); ctx.fillStyle = pg; ctx.fill();
-    ctx.beginPath(); ctx.arc(CX, CY, 12, 0, Math.PI * 2); ctx.strokeStyle = "#22d3ee20"; ctx.lineWidth = 1; ctx.stroke();
-    ctx.beginPath(); ctx.arc(CX, CY, 2.5, 0, Math.PI * 2); ctx.fillStyle = "#22d3ee"; ctx.fill();
-    document.getElementById("dr-val").textContent = Math.round(val);
+  await Promise.allSettled(streams);
+  const elapsed = (performance.now() - startTime) / 1000;
+  return round2((total * 8) / (elapsed * 1_000_000));
 }
 
-/* Needle physics */
-const C2 = { k: .045, f: .78, wk: .032, wf: .82, wa: .14, wa2: .04, wn: .025, wq: .038, wr: .30, ev: .018, ep: .04 };
-let pos = 0, vel = 0, tgt = 0, md = "idle", wc = 0, wcl = 0, ph = 0, raf = null;
-function tick() {
-    if (md === "wobble") { if (wc < wcl) wc = Math.min(wc + C2.wr, wcl); ph += C2.wq; const o = Math.sin(ph) * wc * C2.wa + Math.sin(ph * 2.3) * wc * C2.wa2 + (Math.random() - .5) * wc * C2.wn; vel += (Math.max(0, wc + o) - pos) * C2.wk; vel *= C2.wf; }
-    else { vel += (tgt - pos) * C2.k; vel *= C2.f; if (Math.abs(vel) < C2.ev && Math.abs(tgt - pos) < C2.ep) { pos = tgt; vel = 0; draw(pos); raf = null; return; } }
-    pos = Math.max(0, pos + vel); draw(pos); raf = requestAnimationFrame(tick);
-}
-const loop = () => { if (!raf) raf = requestAnimationFrame(tick); };
-const nSet = (v) => { md = "spring"; tgt = Math.min(v, MAX); loop(); };
-const nWob = (c) => { md = "wobble"; wcl = Math.min(c, MAX); wc = pos; ph = 0; vel *= 0.4; loop(); };
-const nRst = () => { md = "spring"; tgt = 0; loop(); };
-draw(0);
+// ── Upload Engine ────────────────────────────────────────────────────────────
+async function measureUpload(onTick) {
+  const win       = makeWindow();
+  const startTime = performance.now();
+  const deadline  = startTime + CFG.UL_DURATION;
+  let   total     = 0;
 
-/* ══ Loading bars ══ */
-let lbInt = null;
-function showLB(t) {
-    const row = document.getElementById(`lb-${t}`), fill = document.getElementById(`lb-${t}-fill`), pct = document.getElementById(`lb-${t}-pct`);
-    row.classList.remove("hidden"); fill.style.width = "0%"; pct.textContent = "0%"; pct.className = "lb-pct active";
-    let p = 0; clearInterval(lbInt);
-    lbInt = setInterval(() => { const s = Math.max(0.3, (92 - p) * 0.025); p = Math.min(p + s, 92); fill.style.width = p + "%"; pct.textContent = Math.round(p) + "%"; if (p >= 92) clearInterval(lbInt); }, 80);
-}
-function doneLB(t) {
-    clearInterval(lbInt);
-    const fill = document.getElementById(`lb-${t}-fill`), pct = document.getElementById(`lb-${t}-pct`);
-    fill.style.transition = "width .5s ease"; fill.style.width = "100%"; pct.textContent = "100%"; pct.className = "lb-pct";
-    setTimeout(() => { document.getElementById(`lb-${t}`).classList.add("hidden"); fill.style.transition = ""; fill.style.width = "0%"; }, 900);
-}
-function hideAllLB() {
-    clearInterval(lbInt);
-    ["dl", "ul"].forEach(t => { document.getElementById(`lb-${t}`).classList.add("hidden"); document.getElementById(`lb-${t}-fill`).style.width = "0%"; document.getElementById(`lb-${t}-pct`).textContent = "0%"; });
-}
+  // crypto.getRandomValues() → incompressible data
+  // Prevents HTTP compression from inflating upload Mbps
+  const payload = crypto.getRandomValues(new Uint8Array(CFG.UL_BYTES));
+  const ctrl    = Array.from({ length: CFG.UL_STREAMS }, () => new AbortController());
 
-/* ══ GeoIP ══ */
-async function fetchGeoIP() {
-    const badge = document.getElementById("geo-badge"); badge.textContent = "Loading";
-    ["geo-isp", "geo-loc", "geo-country", "geo-tz", "geo-host"].forEach(id => { const el = document.getElementById(id); el.textContent = "—"; el.className = "geo-val loading"; });
-    try {
-        // Step 1: Get the real client IP directly from ipinfo.io in the browser.
-        // This avoids the server returning its own (Render hosting) IP instead of yours.
-        const ipRes = await fetch("https://ipinfo.io/json");
-        const ipData = await ipRes.json();
-        const realIp = ipData.ip;
-
-        // Step 2: Pass the real IP to our backend so it queries ipinfo.io for the right address.
-        const res = await fetch(`/get-geoip?ip=${encodeURIComponent(realIp)}`), d = await res.json();
-        if (d.error) throw new Error(d.error);
-        const isp = d.isp.replace(/^AS\d+\s+/, "");
-        function set(id, v) { const el = document.getElementById(id); el.textContent = v || "—"; el.className = "geo-val"; }
-        set("geo-isp", isp); set("geo-loc", d.city); set("geo-country", `${d.country} — ${d.region}`); set("geo-tz", d.timezone); set("geo-host", d.hostname !== "N/A" ? d.hostname : d.ip);
-        badge.textContent = "Live";
-        document.getElementById("conn-ip").textContent = realIp || "—";
-        document.getElementById("conn-ip").classList.add("hi");
-        const chip = document.getElementById("ip-chip"); chip.textContent = realIp; chip.className = "chip live";
-
-        // Also pass loc to server selector for accurate nearby servers
-        if (ipData.loc) {
-            const [lat, lon] = ipData.loc.split(",");
-            window._userLat = parseFloat(lat);
-            window._userLon = parseFloat(lon);
+  const streams = ctrl.map((ac, i) =>
+    sleep(i * 100).then(async () => {
+      while (performance.now() < deadline) {
+        try {
+          await fetch(SERVER.up, {
+            method:  'POST',
+            body:    payload,
+            signal:  ac.signal,
+            cache:   'no-store',
+            headers: {
+              'Content-Type':  'application/octet-stream',
+              'Cache-Control': 'no-store',
+              'X-Bust':        Date.now().toString(),
+            },
+          });
+          total += CFG.UL_BYTES;
+          win.push(CFG.UL_BYTES);
+          onTick(win.mbps());
+        } catch (_) {
+          break;
         }
-    } catch {
-        badge.textContent = "Error";
-        ["geo-isp", "geo-loc", "geo-country", "geo-tz", "geo-host"].forEach(id => { const el = document.getElementById(id); el.textContent = "Unavailable"; });
-    }
+      }
+    })
+  );
+
+  await Promise.allSettled(streams);
+  ctrl.forEach(c => { try { c.abort(); } catch(_){} });
+  const elapsed = (performance.now() - startTime) / 1000;
+  return round2((total * 8) / (elapsed * 1_000_000));
 }
 
-/* ══ Server selection (auto — no UI selector) ══ */
-let selSrvId = null;
-
-/* ══════════════════════════════════════════════════════
-   WiFi vs Wired Detector + Signal Quality
-══════════════════════════════════════════════════════ */
-
-function detectConnectionQuality() {
-    const nc = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
-
-    // --- DOM refs ---
-    const badge       = document.getElementById("conn-type-badge");
-    const typeName    = document.getElementById("conn-type-name");
-    const typeSub     = document.getElementById("conn-type-sub");
-    const typeIco     = document.getElementById("conn-type-ico");
-    const ringFg      = document.getElementById("ring-fg");
-    const ringLabel   = document.getElementById("ring-label");
-    const sigEtype    = document.getElementById("sig-etype");
-    const sigDownlink = document.getElementById("sig-downlink");
-    const sigRtt      = document.getElementById("sig-rtt");
-    const sigSavedata = document.getElementById("sig-savedata");
-    const qualFill    = document.getElementById("sig-quality-fill");
-    const qualPct     = document.getElementById("sig-quality-pct");
-    const qualDesc    = document.getElementById("sig-quality-desc");
-
-    if (!nc) {
-        badge.textContent     = "Unsupported";
-        typeName.textContent  = "API Unavailable";
-        typeSub.textContent   = "navigator.connection not supported in this browser";
-        typeIco.className     = "fas fa-question-circle";
-        sigEtype.textContent  = "N/A";
-        sigDownlink.textContent = "N/A";
-        sigRtt.textContent    = "N/A";
-        sigSavedata.textContent = "N/A";
-        qualDesc.textContent  = "Try Chrome or Edge for full Network Information API support.";
-        return;
-    }
-
-    /* ── Connection type classification ── */
-    const type      = (nc.type         || "").toLowerCase();        // wifi / ethernet / cellular / none / other
-    const etype     = (nc.effectiveType || "").toLowerCase();       // slow-2g / 2g / 3g / 4g
-    const downlink  = nc.downlink  ?? null;   // Mbps hint (float)
-    const rtt       = nc.rtt       ?? null;   // ms
-    const saveData  = nc.saveData  ?? false;
-
-    /* Classify to a friendly type */
-    let connLabel, iconClass, colorClass, typeDetail;
-    if (type === "ethernet") {
-        connLabel  = "Wired (Ethernet)";
-        iconClass  = "fas fa-network-wired";
-        colorClass = "conn-wired";
-        typeDetail = "Stable, low-latency wired connection";
-    } else if (type === "wifi") {
-        connLabel  = "WiFi";
-        iconClass  = "fas fa-wifi";
-        colorClass = "conn-wifi";
-        typeDetail = "Wireless LAN connection";
-    } else if (type === "cellular") {
-        const cLabel = etype === "4g" ? "4G/LTE" : etype === "3g" ? "3G" : etype === "2g" ? "2G" : etype === "slow-2g" ? "Slow 2G" : "Cellular";
-        connLabel  = `Cellular (${cLabel})`;
-        iconClass  = "fas fa-signal";
-        colorClass = "conn-cellular";
-        typeDetail = "Mobile network connection";
-    } else if (type === "none") {
-        connLabel  = "Offline";
-        iconClass  = "fas fa-times-circle";
-        colorClass = "conn-offline";
-        typeDetail = "No network detected";
-    } else {
-        /* API supported but type not exposed — infer from etype */
-        if (etype === "4g") {
-            connLabel  = downlink > 50 ? "Wired / Fast WiFi" : "WiFi / 4G";
-            iconClass  = downlink > 50 ? "fas fa-network-wired" : "fas fa-wifi";
-            colorClass = "conn-wifi";
-            typeDetail = "High-speed connection detected";
-        } else {
-            connLabel  = "Unknown";
-            iconClass  = "fas fa-globe";
-            colorClass = "";
-            typeDetail = `Effective type: ${etype || "unknown"}`;
-        }
-    }
-
-    /* ── Signal quality score 0–100 ── */
-    let score = 0;
-    if (etype === "4g")      score += 50;
-    else if (etype === "3g") score += 30;
-    else if (etype === "2g") score += 15;
-    else if (etype === "slow-2g") score += 5;
-    else                     score += 50;   // unknown = assume decent
-
-    if (downlink !== null) {
-        if      (downlink >= 100) score += 50;
-        else if (downlink >= 50)  score += 40;
-        else if (downlink >= 20)  score += 30;
-        else if (downlink >= 5)   score += 20;
-        else if (downlink >= 1)   score += 10;
-        else                      score +=  5;
-    } else { score += 25; }  // unknown → neutral
-
-    if (rtt !== null) {
-        if      (rtt <= 20)  score = Math.min(score, 100);
-        else if (rtt <= 50)  score = Math.min(score * 0.95, 100);
-        else if (rtt <= 100) score = Math.min(score * 0.85, 100);
-        else if (rtt <= 200) score *= 0.70;
-        else                 score *= 0.50;
-    }
-
-    if (saveData) score *= 0.75;
-    if (type === "none") score = 0;
-
-    score = Math.min(100, Math.round(score));
-
-    /* ── Quality label ── */
-    let qualLabel, qualDescText, qualFillColor;
-    if (score >= 80)      { qualLabel = "Excellent"; qualDescText = "Great connection — speed test should run smoothly.";          qualFillColor = "#22d3ee"; }
-    else if (score >= 60) { qualLabel = "Good";      qualDescText = "Solid connection — expect reliable results.";                qualFillColor = "#34d399"; }
-    else if (score >= 40) { qualLabel = "Fair";      qualDescText = "Moderate connection — results may vary slightly.";           qualFillColor = "#fbbf24"; }
-    else if (score >= 20) { qualLabel = "Poor";      qualDescText = "Weak signal — speed test results may be inconsistent.";     qualFillColor = "#f87171"; }
-    else                  { qualLabel = "Critical";  qualDescText = "Very poor or no connection — testing may fail.";            qualFillColor = "#ef4444"; }
-
-    /* ── Render ── */
-    badge.textContent         = qualLabel;
-    typeName.textContent      = connLabel;
-    typeSub.textContent       = typeDetail;
-    typeIco.className         = iconClass;
-    document.getElementById("conn-type-hero").className = `conn-type-hero ${colorClass}`;
-
-    sigEtype.textContent      = etype    ? etype.toUpperCase()             : "N/A";
-    sigDownlink.textContent   = downlink !== null ? `${downlink} Mbps`     : "N/A";
-    sigRtt.textContent        = rtt      !== null ? `${rtt} ms`            : "N/A";
-    sigSavedata.textContent   = saveData ? "Enabled ⚡" : "Off";
-    sigSavedata.style.color   = saveData ? "#fbbf24" : "";
-
-    qualFill.style.background = qualFillColor;
-    qualFill.style.width      = score + "%";
-    qualPct.textContent       = score + "%";
-    qualDesc.textContent      = qualDescText;
-
-    /* Ring arc: circumference = 2πr ≈ 113 for r=18 */
-    const offset = 113 - (score / 100) * 113;
-    ringFg.style.stroke           = qualFillColor;
-    ringFg.style.strokeDashoffset = offset;
-    ringLabel.textContent         = score;
-    ringLabel.style.color         = qualFillColor;
-
-    /* Live update on change */
-    nc.onchange = detectConnectionQuality;
+// ── Outlier Filter (Z-score) ─────────────────────────────────────────────────
+function filteredAvg(samples) {
+  if (samples.length < 3) return round2(avg(samples));
+  const m  = avg(samples);
+  const sd = stddev(samples);
+  if (sd === 0) return round2(m);
+  const clean = samples.filter(v => Math.abs((v - m) / sd) < 2.5);
+  return round2(avg(clean.length ? clean : samples));
 }
 
-function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
+// ── Quality Score ────────────────────────────────────────────────────────────
+function qualityScore({ download, upload, ping, jitter }) {
+  let s = 0;
+  // Download — 40 pts
+  s += download >= 200 ? 40 : download >= 100 ? 35 : download >= 50 ? 28 :
+       download >= 25  ? 20 : download >= 10  ? 12 : download >= 5  ?  6 : 2;
+  // Upload — 25 pts
+  s += upload >= 100 ? 25 : upload >= 50 ? 20 : upload >= 20 ? 15 :
+       upload >= 10  ? 10 : upload >= 5  ?  6 : 2;
+  // Ping — 25 pts
+  s += ping <= 5  ? 25 : ping <= 15 ? 22 : ping <= 30 ? 18 :
+       ping <= 60 ? 13 : ping <= 100 ?  8 : ping <= 150 ? 4 : 1;
+  // Jitter — 10 pts
+  s += jitter <= 1 ? 10 : jitter <= 3 ? 8 : jitter <= 8 ? 6 :
+       jitter <= 15 ? 3 : 0;
+  return Math.min(100, Math.round(s));
+}
+function qualityInfo(score) {
+  if (score >= 85) return { label: 'Excellent', color: '#22d3ee' };
+  if (score >= 70) return { label: 'Good',      color: '#34d399' };
+  if (score >= 50) return { label: 'Fair',      color: '#fbbf24' };
+  if (score >= 30) return { label: 'Poor',      color: '#f87171' };
+  return               { label: 'Critical',  color: '#ef4444' };
+}
 
-/* ══ Public IP ══ */
-(async function () {
-    try {
-        // Fetch IP directly in the browser — avoids returning the Render server's IP
-        const res = await fetch("https://ipinfo.io/json"), d = await res.json();
-        const chip = document.getElementById("ip-chip");
-        if (d.ip) { chip.textContent = d.ip; chip.className = "chip live"; }
-        else { chip.textContent = "Unavailable"; chip.className = "chip error"; }
-    } catch { document.getElementById("ip-chip").textContent = "Unavailable"; }
+// ── Canvas Gauge ─────────────────────────────────────────────────────────────
+const Gauge = (() => {
+  let _current = 0;
+  let _target  = 0;
+  const MAX    = 1000; // Mbps scale max
+
+  function draw(value) {
+    const canvas = document.getElementById('gauge-canvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const cx  = canvas.width  / 2;
+    const cy  = canvas.height - 30;
+    const R   = 130;
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Track background
+    ctx.beginPath();
+    ctx.arc(cx, cy, R, Math.PI, 0, false);
+    ctx.lineWidth   = 18;
+    ctx.strokeStyle = '#1a1e2a';
+    ctx.stroke();
+
+    // Value arc
+    const pct   = Math.min(value / MAX, 1);
+    const angle = Math.PI + pct * Math.PI;
+    const grad  = ctx.createLinearGradient(cx - R, cy, cx + R, cy);
+    grad.addColorStop(0,   '#818cf8');
+    grad.addColorStop(0.5, '#38bdf8');
+    grad.addColorStop(1,   '#34d399');
+    ctx.beginPath();
+    ctx.arc(cx, cy, R, Math.PI, angle, false);
+    ctx.lineWidth   = 18;
+    ctx.strokeStyle = grad;
+    ctx.lineCap     = 'round';
+    ctx.stroke();
+
+    // Tick marks
+    [0, 100, 200, 300, 500, 750, 1000].forEach(t => {
+      const a  = Math.PI + (t / MAX) * Math.PI;
+      const x1 = cx + (R - 26) * Math.cos(a);
+      const y1 = cy + (R - 26) * Math.sin(a);
+      const x2 = cx + (R - 10) * Math.cos(a);
+      const y2 = cy + (R - 10) * Math.sin(a);
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.lineWidth   = 2;
+      ctx.strokeStyle = '#2a2f3f';
+      ctx.stroke();
+    });
+  }
+
+  function animate() {
+    _current += (_target - _current) * 0.12; // lerp
+    draw(_current);
+    const el = document.getElementById('gauge-number');
+    if (el) el.textContent = _current.toFixed(1);
+    requestAnimationFrame(animate);
+  }
+
+  return {
+    init()  { requestAnimationFrame(animate); },
+    set(v)  { _target = v; },
+    reset() { _target = 0; },
+  };
 })();
 
-/* ══ Chart ══ */
-let chartInst = null, curTab = "bar";
-function switchTab(tab, e) {
-    curTab = tab;
-    document.querySelectorAll(".tab").forEach(b => b.classList.remove("active"));
-    e.target.classList.add("active"); renderChart();
-}
-function renderChart() {
-    const h = loadHist();
-    const empty = document.getElementById("chart-empty"), wrap = document.getElementById("chart-wrap"), canvas = document.getElementById("myChart"), badge = document.getElementById("chart-badge");
-    if (!h.length) { empty.style.display = "flex"; wrap.style.display = "none"; badge.textContent = "No data"; if (chartInst) { chartInst.destroy(); chartInst = null; } return; }
-    empty.style.display = "none"; wrap.style.display = "block"; badge.textContent = `${h.length} run${h.length > 1 ? "s" : ""}`;
-    const labels = h.map((_, i) => `#${i + 1}`);
-    const opts = {
-        responsive: true, maintainAspectRatio: false, animation: { duration: 400 },
-        plugins: {
-            legend: { position: "bottom", labels: { color: "#52525b", font: { size: 10, family: "Inter,Segoe UI,sans-serif" }, boxWidth: 8, padding: 12 } },
-            tooltip: { backgroundColor: "#111111", borderColor: "#222222", borderWidth: 1, titleColor: "#71717a", bodyColor: "#e4e4e7", padding: 10, titleFont: { size: 10 }, bodyFont: { size: 11, weight: "bold" } }
-        },
+// ── Live Chart (Chart.js) ────────────────────────────────────────────────────
+const LiveChart = (() => {
+  let chart = null;
+  const MAX_POINTS = 60;
+
+  function init() {
+    const ctx = document.getElementById('chart-live');
+    if (!ctx || !window.Chart) return;
+    chart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [{
+          label:           'Mbps',
+          data:            [],
+          borderColor:     '#38bdf8',
+          backgroundColor: 'rgba(56,189,248,0.07)',
+          borderWidth:     2,
+          pointRadius:     0,
+          tension:         0.4,
+          fill:            true,
+        }],
+      },
+      options: {
+        responsive:  true,
+        animation:   { duration: 0 },
         scales: {
-            x: { ticks: { color: "#3f3f46", font: { size: 9 } }, grid: { color: "#1c1c1c" }, border: { color: "#222222" } },
-            y: { ticks: { color: "#3f3f46", font: { size: 9 } }, grid: { color: "#1c1c1c" }, border: { color: "#222222" }, beginAtZero: true }
-        }
-    };
-    const dl = h.map(r => r.download), ul = h.map(r => r.upload), pg = h.map(r => r.ping);
-    let ds;
-    if (curTab === "bar") {
-        ds = [
-            { label: "Download", data: dl, backgroundColor: "#22d3ee18", borderColor: "#22d3ee", borderWidth: 1.5, borderRadius: 4 },
-            { label: "Upload", data: ul, backgroundColor: "#818cf818", borderColor: "#818cf8", borderWidth: 1.5, borderRadius: 4 },
-            { label: "Ping", data: pg, backgroundColor: "#34d39918", borderColor: "#34d399", borderWidth: 1.5, borderRadius: 4 }];
-    } else {
-        ds = [
-            { label: "Download", data: dl, borderColor: "#22d3ee", backgroundColor: "#22d3ee0a", borderWidth: 1.5, pointBackgroundColor: "#22d3ee", pointRadius: 3, tension: 0.4, fill: true },
-            { label: "Upload", data: ul, borderColor: "#818cf8", backgroundColor: "#818cf80a", borderWidth: 1.5, pointBackgroundColor: "#818cf8", pointRadius: 3, tension: 0.4, fill: true },
-            { label: "Ping", data: pg, borderColor: "#34d399", backgroundColor: "#34d3990a", borderWidth: 1.5, pointBackgroundColor: "#34d399", pointRadius: 3, tension: 0.4, fill: true }];
+          x: { display: false },
+          y: {
+            beginAtZero: true,
+            grid:  { color: '#1a1e2a' },
+            ticks: { color: '#64748b', maxTicksLimit: 5 },
+          },
+        },
+        plugins: {
+          legend:  { display: false },
+          tooltip: { enabled: false },
+        },
+      },
+    });
+  }
+
+  function push(v) {
+    if (!chart) return;
+    chart.data.labels.push('');
+    chart.data.datasets[0].data.push(v);
+    if (chart.data.labels.length > MAX_POINTS) {
+      chart.data.labels.shift();
+      chart.data.datasets[0].data.shift();
     }
-    if (chartInst) { chartInst.destroy(); chartInst = null; }
-    chartInst = new Chart(canvas, { type: curTab === "bar" ? "bar" : "line", data: { labels, datasets: ds }, options: opts });
+    chart.update('none');
+  }
+
+  function reset() {
+    if (!chart) return;
+    chart.data.labels              = [];
+    chart.data.datasets[0].data   = [];
+    chart.update('none');
+  }
+
+  return { init, push, reset };
+})();
+
+// ── History ──────────────────────────────────────────────────────────────────
+const HIST_KEY = 'netpulse_v3';
+const HIST_MAX = 10;
+
+function saveHistory(r) {
+  const h = getHistory();
+  h.push(r);
+  if (h.length > HIST_MAX) h.shift();
+  localStorage.setItem(HIST_KEY, JSON.stringify(h));
+}
+function getHistory() {
+  try { return JSON.parse(localStorage.getItem(HIST_KEY)) || []; }
+  catch (_) { return []; }
+}
+function renderHistory() {
+  const tbody = document.getElementById('history-body');
+  if (!tbody) return;
+  const hist = getHistory().slice().reverse();
+  if (!hist.length) {
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#64748b;padding:20px">No tests yet</td></tr>';
+    return;
+  }
+  tbody.innerHTML = hist.map(r => {
+    const qi = qualityInfo(r.score || 0);
+    return `<tr>
+      <td>${r.time}</td>
+      <td style="color:#34d399;font-weight:700">${r.download} Mbps</td>
+      <td style="color:#818cf8;font-weight:700">${r.upload} Mbps</td>
+      <td>${r.ping} ms</td>
+      <td>${r.jitter} ms</td>
+      <td><span class="score-badge" style="background:${qi.color}22;color:${qi.color}">${r.score} — ${qi.label}</span></td>
+      <td style="color:#64748b;font-size:0.8rem">${r.server}</td>
+    </tr>`;
+  }).join('');
 }
 
-/* ══ History ══ */
-const SK = "netpulse_v2", MX = 10;
-function loadHist() { try { return JSON.parse(localStorage.getItem(SK)) || []; } catch { return []; } }
-function saveResult(r) { const h = loadHist(); h.push(r); if (h.length > MX) h.shift(); localStorage.setItem(SK, JSON.stringify(h)); }
-function clearHistory() { localStorage.removeItem(SK); renderHist(); renderChart(); }
-function rating(dl) { if (dl >= 100) return { t: "Excellent", c: "excellent" }; if (dl >= 50) return { t: "Good", c: "good" }; if (dl >= 20) return { t: "Fair", c: "fair" }; return { t: "Poor", c: "poor" }; }
-function renderHist() {
-    const h = loadHist(), body = document.getElementById("hist-scroll");
-    if (!h.length) { body.innerHTML = `<div class="hist-empty">No tests recorded</div>`; return; }
-    body.innerHTML = h.slice().reverse().map((r, i) => {
-        const n = h.length - i; const rt = rating(r.download); return `
-<div class="hist-item">
-<span class="hist-index">${n}</span>
-<div class="hist-bar"></div>
-<div class="hist-content">
-<div class="hist-time">${r.time}${r.server ? " · " + r.server : ""}</div>
-<div class="hist-vals">
-    <span class="hv dl"><b>${r.download}</b> Mbps</span>
-    <span class="hv ul"><b>${r.upload}</b> Mbps</span>
-    <span class="hv pg"><b>${r.ping}</b> ms</span>
-</div>
-</div>
-<span class="hist-badge ${rt.c}">${rt.t}</span>
-</div>`;
-    }).join("");
+// ── DOM Helpers ───────────────────────────────────────────────────────────────
+const $      = id  => document.getElementById(id);
+const setVal = (id, v) => { const el = $(id); if (el) el.textContent = v; };
+const setStatus = msg => setVal('status-text', msg);
+function setActive(id) {
+  document.querySelectorAll('.np-metric-card').forEach(c => c.classList.remove('active'));
+  const el = $(id);
+  if (el) el.classList.add('active');
 }
 
-/* ══ Speed Test SSE ══ */
-const PROG = { server: 8, ping: 24, download: 62, upload: 88, complete: 100 };
-function setBar(p) { document.getElementById("bar").style.width = p + "%"; document.getElementById("pct").textContent = p + "%"; }
-function setStatus(html, raw = false) { const el = document.getElementById("status"); raw ? (el.innerHTML = html) : (el.textContent = html); }
-function setStage(t, live = false) { const el = document.getElementById("dr-stage"); el.textContent = t; el.className = "dr-stage" + (live ? " live" : ""); }
-function setSC(id, val, cls, badge) { document.getElementById(`sv-${id}`).textContent = val; document.getElementById(`sc-${id}`).className = `stat-card ${cls}`; document.getElementById(`sb-${id}`).textContent = badge; }
-function setDot(a) { document.getElementById("dot").className = "status-dot" + (a ? " active" : ""); }
-
-function resetUI() {
-    setSC("ping", "--", "", "—"); setSC("dl", "--", "", "—"); setSC("ul", "--", "", "—");
-    hideAllLB(); nRst(); setBar(0); setStatus("Ready"); setStage("Idle"); setDot(false);
-    document.getElementById("server-chip").textContent = "";
+// ── GeoIP Loader ──────────────────────────────────────────────────────────────
+async function loadGeoIP() {
+  try {
+    // Primary: ip-api.com (free, no key, CORS-enabled)
+    const r = await fetch(
+      'http://ip-api.com/json/?fields=status,country,countryCode,regionName,city,lat,lon,isp,org,query',
+      { cache: 'no-store' }
+    );
+    const d = await r.json();
+    if (d.status === 'success') {
+      setVal('val-ip',       d.query);
+      setVal('val-isp',      d.org || d.isp);
+      setVal('val-location', `${d.city}, ${d.countryCode}`);
+      return;
+    }
+  } catch (_) {}
+  // Fallback: ipinfo.io
+  try {
+    const r2 = await fetch('https://ipinfo.io/json', { cache: 'no-store' });
+    const d2 = await r2.json();
+    setVal('val-ip',       d2.ip);
+    setVal('val-isp',      d2.org);
+    setVal('val-location', `${d2.city}, ${d2.country}`);
+  } catch (_) {}
 }
 
-function startTest() {
-    const btn = document.getElementById("btn");
-    btn.disabled = true; btn.textContent = "Testing…";
-    resetUI(); setDot(true);
-    const url = selSrvId ? `/run-speedtest?server_id=${selSrvId}` : "/run-speedtest";
-    const es = new EventSource(url);
-    es.onmessage = ({ data }) => {
-        const d = JSON.parse(data);
-        if (PROG[d.stage]) setBar(PROG[d.stage]);
-        switch (d.stage) {
-            case "server":
-                setStage("Connecting", true); setStatus(`<span class="spin"></span>${d.status}`, true);
-                if (d.server) {
-                    document.getElementById("server-chip").textContent = d.server; setStatus("Connected"); setStage("Server OK");
-                    document.getElementById("conn-server").textContent = d.server || "—";
-                    document.getElementById("conn-sponsor").textContent = d.sponsor || "—";
-                    document.getElementById("conn-host").textContent = d.host || "—";
-                    document.getElementById("conn-dist").textContent = d.distance ? d.distance + " km" : "—";
-                    document.getElementById("conn-badge").textContent = d.country || "";
-                    ["conn-server", "conn-sponsor", "conn-host", "conn-dist"].forEach(id => document.getElementById(id).classList.add("hi"));
-                } break;
-            case "ping":
-                setSC("ping", "…", "active", "Testing"); setStage("Ping", true); setStatus(`<span class="spin"></span>Measuring ping…`, true);
-                if (d.value != null) { setSC("ping", d.value, "done", "Done"); setStatus(`Ping: ${d.value} ms`); setStage(`${d.value} ms`); }
-                break;
-            case "download":
-                setSC("dl", "…", "active", "Testing"); setStage("Download", true); setStatus(`<span class="spin"></span>Testing download…`, true);
-                showLB("dl"); nWob(90);
-                if (d.value != null) { doneLB("dl"); nSet(d.value); setSC("dl", d.value, "done", "Done"); setStatus(`Download: ${d.value} Mbps`); setStage(`${d.value} Mbps`); }
-                break;
-            case "upload":
-                setSC("ul", "…", "active", "Testing"); setStage("Upload", true); setStatus(`<span class="spin"></span>Testing upload…`, true);
-                showLB("ul"); nWob(42);
-                if (d.value != null) { doneLB("ul"); nSet(d.value); setSC("ul", d.value, "done", "Done"); setStatus(`Upload: ${d.value} Mbps`); setStage(`${d.value} Mbps`); }
-                break;
-            case "complete":
-                hideAllLB(); setStage("Complete"); setStatus(`Done — ${d.download} Mbps down, ${d.upload} Mbps up, ${d.ping} ms`);
-                setDot(false); btn.disabled = false; btn.textContent = "Run Again"; es.close();
-                const now = new Date();
-                const ts = now.toLocaleDateString("en-IN", { day: "2-digit", month: "short" }) + " " + now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
-                const srv = document.getElementById("conn-server").textContent;
-                saveResult({ download: d.download, upload: d.upload, ping: d.ping, time: ts, server: srv !== "—" ? srv : "" });
-                renderHist(); renderChart();
-                break;
-            case "error":
-                hideAllLB(); nRst(); setStage("Error"); setStatus(d.message); setDot(false); btn.disabled = false; btn.textContent = "Start Test"; es.close(); break;
-        }
-    };
-    es.onerror = () => { hideAllLB(); nRst(); setDot(false); setStatus("Connection error — check Flask on port 8080"); setStage("Error"); btn.disabled = false; btn.textContent = "Start Test"; es.close(); };
+// ── Main Test Orchestrator ────────────────────────────────────────────────────
+let isRunning = false;
+
+async function runTest() {
+  if (isRunning) return;
+  isRunning = true;
+
+  const btn = $('btn-start');
+  if (btn) { btn.disabled = true; btn.classList.add('running'); }
+  setVal('btn-label', '…');
+
+  // Reset UI
+  Gauge.reset();
+  LiveChart.reset();
+  ['val-ping','val-jitter','val-download','val-upload','val-quality'].forEach(id => setVal(id, '—'));
+  setVal('val-quality-label', '');
+  setVal('val-server', SERVER.label);
+  setStatus('Starting…');
+
+  const dlSamples = [];
+  const ulSamples = [];
+
+  try {
+    // ── 1. Ping ──────────────────────────────────────────────────────────────
+    setStatus('Measuring latency…');
+    setActive('card-ping');
+    const { ping, jitter } = await measurePing();
+    setVal('val-ping',   ping);
+    setVal('val-jitter', jitter);
+    setStatus(`Ping: ${ping} ms  ·  Jitter: ${jitter} ms`);
+    await sleep(300);
+
+    // ── 2. Download ──────────────────────────────────────────────────────────
+    setStatus('Warming up connection…');
+    await sleep(200);
+    setStatus('Testing download speed…');
+    setActive('card-download');
+
+    const dlFinal = await measureDownload((mbps) => {
+      Gauge.set(mbps);
+      LiveChart.push(mbps);
+      setVal('val-download', mbps);
+      dlSamples.push(mbps);
+    });
+
+    const download = filteredAvg(dlSamples) || dlFinal;
+    setVal('val-download', download);
+    Gauge.set(download);
+    setStatus(`Download: ${download} Mbps`);
+    await sleep(300);
+
+    // ── 3. Upload ────────────────────────────────────────────────────────────
+    setStatus('Testing upload speed…');
+    setActive('card-upload');
+
+    const ulFinal = await measureUpload((mbps) => {
+      Gauge.set(mbps);
+      LiveChart.push(mbps);
+      setVal('val-upload', mbps);
+      ulSamples.push(mbps);
+    });
+
+    const upload = filteredAvg(ulSamples) || ulFinal;
+    setVal('val-upload', upload);
+    Gauge.set(download); // reset gauge to download after upload
+    setStatus(`Upload: ${upload} Mbps`);
+    await sleep(200);
+
+    // ── 4. Quality Score ──────────────────────────────────────────────────────
+    const score = qualityScore({ download, upload, ping, jitter });
+    const qi    = qualityInfo(score);
+    setVal('val-quality', score);
+    setVal('val-quality-label', qi.label);
+    const qEl = $('val-quality');
+    if (qEl) qEl.style.color = qi.color;
+    setActive('card-quality');
+    setStatus(`Done — ${qi.label} connection`);
+
+    // ── 5. Save to history ────────────────────────────────────────────────────
+    saveHistory({
+      download, upload, ping, jitter,
+      score,
+      server: SERVER.label,
+      time:   new Date().toLocaleTimeString(),
+    });
+    renderHistory();
+
+  } catch (err) {
+    setStatus(`Error: ${err.message}`);
+  } finally {
+    isRunning = false;
+    if (btn) { btn.disabled = false; btn.classList.remove('running'); }
+    setVal('btn-label', 'GO');
+  }
 }
 
-/* Init */
-renderHist();
-renderChart();
-fetchGeoIP();
-detectConnectionQuality();
+// ── Boot ──────────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  Gauge.init();
+  LiveChart.init();
+  loadGeoIP();
+  renderHistory();
+
+  const clearBtn = $('btn-clear');
+  if (clearBtn) {
+    clearBtn.addEventListener('click', () => {
+      localStorage.removeItem(HIST_KEY);
+      renderHistory();
+    });
+  }
+});
