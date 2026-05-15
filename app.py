@@ -34,29 +34,6 @@ def index():
     return render_template("index.html")
 
 
-@app.route("/config")
-def config():
-    """Return CDN endpoint config to the browser. Never proxy test bytes."""
-    return jsonify({
-        "servers": [
-            {
-                "id":    "cf-auto",
-                "label": "Cloudflare Edge (Auto-nearest PoP)",
-                "ping":  "https://speed.cloudflare.com/__down?bytes=0",
-                "down":  "https://speed.cloudflare.com/__down?bytes=",
-                "up":    "https://speed.cloudflare.com/__up",
-            }
-        ],
-        "test": {
-            "dl_streams":  6,
-            "ul_streams":  4,
-            "dl_mb":       25,
-            "ul_mb":       4,
-            "duration_ms": 12000,
-        }
-    })
-
-
 @app.route("/get-ip")
 def get_ip():
     forwarded = request.headers.get("X-Forwarded-For", "")
@@ -92,6 +69,4 @@ def get_geoip():
         return jsonify({"error": str(e)}), 500
 
 
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port, debug=False)
+# ── No app.run() — Gunicorn handles startup in production ─────────────────────
