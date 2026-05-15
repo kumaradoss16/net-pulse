@@ -1,22 +1,26 @@
 'use strict';
 
 /* ================================================================
-   NetPulse v5 — Direct Cloudflare speed.cloudflare.com API
-   No npm package needed. Uses the same endpoints as speed.cloudflare.com
-   Nearest PoP via Anycast automatically.
+   NetPulse v6 — Direct Cloudflare speed.cloudflare.com API
+   Fix: upload uses XHR (bypasses fetch CORS on __up)
+   Fix: parallel download streams use ReadableStream (no blocking)
+   Fix: server chip string fixed
    ================================================================ */
 
-const round2   = v  => (v != null && isFinite(v)) ? Math.round(v * 100) / 100 : 0;
-const sleep    = ms => new Promise(r => setTimeout(r, ms));
-const avg      = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
-const median   = arr => { const s = [...arr].sort((a,b)=>a-b); const m=Math.floor(s.length/2); return s.length%2?s[m]:(s[m-1]+s[m])/2; };
+const round2 = v  => (v != null && isFinite(v)) ? Math.round(v * 100) / 100 : 0;
+const sleep  = ms => new Promise(r => setTimeout(r, ms));
+const avg    = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
+const median = arr => {
+  const s = [...arr].sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+};
 
-// Cloudflare speed test endpoints (same as speed.cloudflare.com)
 const CF = {
   meta:    'https://speed.cloudflare.com/meta',
-  down:    (bytes) => `https://speed.cloudflare.com/__down?bytes=${bytes}&r=${Math.random()}`,
+  down:    bytes => `https://speed.cloudflare.com/__down?bytes=${bytes}&r=${Math.random()}`,
   up:      'https://speed.cloudflare.com/__up',
-  latency: 'https://speed.cloudflare.com/__down?bytes=0',
+  latency: `https://speed.cloudflare.com/__down?bytes=0`,
 };
 
 // ── Quality Score ──────────────────────────────────────────────────────────────
@@ -40,11 +44,10 @@ function qualityInfo(score) {
   return               { label: 'Critical',  color: '#ef4444' };
 }
 
-// ── Canvas Gauge ───────────────────────────────────────────────────────────────
+// ── Gauge ──────────────────────────────────────────────────────────────────────
 const Gauge = (() => {
   let _cur = 0, _tgt = 0;
   const MAX = 1000;
-
   function draw(v) {
     const canvas = document.getElementById('speedo');
     if (!canvas) return;
@@ -58,22 +61,22 @@ const Gauge = (() => {
     grad.addColorStop(0, '#818cf8'); grad.addColorStop(0.5, '#38bdf8'); grad.addColorStop(1, '#34d399');
     ctx.beginPath(); ctx.arc(cx, cy, R, Math.PI, angle, false);
     ctx.lineWidth = 16; ctx.strokeStyle = grad; ctx.lineCap = 'round'; ctx.stroke();
-    [0,100,200,300,500,750,1000].forEach(t => {
-      const a = Math.PI + (t/MAX)*Math.PI;
+    [0, 100, 200, 300, 500, 750, 1000].forEach(t => {
+      const a = Math.PI + (t / MAX) * Math.PI;
       ctx.beginPath();
-      ctx.moveTo(cx+(R-22)*Math.cos(a), cy+(R-22)*Math.sin(a));
-      ctx.lineTo(cx+(R-8)*Math.cos(a),  cy+(R-8)*Math.sin(a));
+      ctx.moveTo(cx + (R - 22) * Math.cos(a), cy + (R - 22) * Math.sin(a));
+      ctx.lineTo(cx + (R - 8)  * Math.cos(a), cy + (R - 8)  * Math.sin(a));
       ctx.lineWidth = 2; ctx.strokeStyle = '#2a2f3f'; ctx.stroke();
     });
   }
-
   function animate() {
-    _cur += (_tgt - _cur) * 0.12; draw(_cur);
+    _cur += (_tgt - _cur) * 0.12;
+    draw(_cur);
     const el = document.getElementById('dr-val');
     if (el) el.textContent = _cur.toFixed(1);
     requestAnimationFrame(animate);
   }
-  return { init() { requestAnimationFrame(animate); }, set(v) { _tgt=v; }, reset() { _tgt=0; } };
+  return { init() { requestAnimationFrame(animate); }, set(v) { _tgt = v; }, reset() { _tgt = 0; } };
 })();
 
 // ── Live Chart ─────────────────────────────────────────────────────────────────
@@ -84,42 +87,47 @@ const LiveChart = (() => {
     if (!ctx || !window.Chart) return;
     chart = new Chart(ctx, {
       type: 'line',
-      data: { labels: [], datasets: [{ label:'Mbps', data:[], borderColor:'#38bdf8',
-        backgroundColor:'rgba(56,189,248,0.07)', borderWidth:2, pointRadius:0, tension:0.4, fill:true }] },
-      options: { responsive:true, animation:{duration:0},
-        scales: { x:{display:false}, y:{beginAtZero:true, grid:{color:'#1a1e2a'}, ticks:{color:'#64748b',maxTicksLimit:5}} },
-        plugins: { legend:{display:false}, tooltip:{enabled:false} } },
+      data: { labels: [], datasets: [{ label: 'Mbps', data: [],
+        borderColor: '#38bdf8', backgroundColor: 'rgba(56,189,248,0.07)',
+        borderWidth: 2, pointRadius: 0, tension: 0.4, fill: true }] },
+      options: { responsive: true, animation: { duration: 0 },
+        scales: {
+          x: { display: false },
+          y: { beginAtZero: true, grid: { color: '#1a1e2a' }, ticks: { color: '#64748b', maxTicksLimit: 5 } },
+        },
+        plugins: { legend: { display: false }, tooltip: { enabled: false } } },
     });
   }
   function push(v) {
     if (!chart) return;
-    chart.data.labels.push(''); chart.data.datasets[0].data.push(v);
+    chart.data.labels.push('');
+    chart.data.datasets[0].data.push(v);
     if (chart.data.labels.length > 80) { chart.data.labels.shift(); chart.data.datasets[0].data.shift(); }
     chart.update('none');
-    const w=$('chart-wrap'), e=$('chart-empty'), b=$('chart-badge');
-    if(w) w.style.display='block'; if(e) e.style.display='none'; if(b) b.textContent='Live';
+    const w = $('chart-wrap'), e = $('chart-empty'), b = $('chart-badge');
+    if (w) w.style.display = 'block'; if (e) e.style.display = 'none'; if (b) b.textContent = 'Live';
   }
   function reset() {
     if (!chart) return;
-    chart.data.labels=[]; chart.data.datasets[0].data=[]; chart.update('none');
-    const w=$('chart-wrap'), e=$('chart-empty'), b=$('chart-badge');
-    if(w) w.style.display='none'; if(e) e.style.display='block'; if(b) b.textContent='No data';
+    chart.data.labels = []; chart.data.datasets[0].data = []; chart.update('none');
+    const w = $('chart-wrap'), e = $('chart-empty'), b = $('chart-badge');
+    if (w) w.style.display = 'none'; if (e) e.style.display = 'block'; if (b) b.textContent = 'No data';
   }
   return { init, push, reset };
 })();
 
 // ── History ────────────────────────────────────────────────────────────────────
-const HIST_KEY = 'netpulse_v5';
+const HIST_KEY = 'netpulse_v6';
 const HIST_MAX = 10;
-function saveHistory(r) { const h=getHistory(); h.push(r); if(h.length>HIST_MAX) h.shift(); localStorage.setItem(HIST_KEY,JSON.stringify(h)); }
-function getHistory()  { try { return JSON.parse(localStorage.getItem(HIST_KEY))||[]; } catch(_){ return []; } }
-function clearHistory(){ localStorage.removeItem(HIST_KEY); renderHistory(); }
+function saveHistory(r)  { const h = getHistory(); h.push(r); if (h.length > HIST_MAX) h.shift(); localStorage.setItem(HIST_KEY, JSON.stringify(h)); }
+function getHistory()    { try { return JSON.parse(localStorage.getItem(HIST_KEY)) || []; } catch (_) { return []; } }
+function clearHistory()  { localStorage.removeItem(HIST_KEY); renderHistory(); }
 function renderHistory() {
-  const c=document.getElementById('hist-scroll'); if(!c) return;
-  const hist=getHistory().slice().reverse();
-  if(!hist.length){ c.innerHTML='<div class="hist-empty">No tests recorded</div>'; return; }
-  c.innerHTML=hist.map(r=>{
-    const qi=qualityInfo(r.score||0);
+  const c = document.getElementById('hist-scroll'); if (!c) return;
+  const hist = getHistory().slice().reverse();
+  if (!hist.length) { c.innerHTML = '<div class="hist-empty">No tests recorded</div>'; return; }
+  c.innerHTML = hist.map(r => {
+    const qi = qualityInfo(r.score || 0);
     return `<div class="hist-item" style="padding:10px 0;border-bottom:1px solid #1a1e2a">
       <div style="font-size:0.75rem;color:#64748b;margin-bottom:4px">${r.time} · ${r.server}</div>
       <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center">
@@ -135,26 +143,26 @@ function renderHistory() {
 
 // ── DOM Helpers ────────────────────────────────────────────────────────────────
 const $      = id => document.getElementById(id);
-const setVal = (id,v) => { const el=$(id); if(el) el.textContent=v; };
+const setVal = (id, v) => { const el = $(id); if (el) el.textContent = v; };
 function setStatus(msg, pct) {
   setVal('status', msg);
-  const bar=$('bar'), pctEl=$('pct');
-  if(bar)   bar.style.width   = `${Math.min(pct??0,100)}%`;
-  if(pctEl) pctEl.textContent = pct!=null ? `${Math.round(pct)}%` : '';
+  const bar = $('bar'), pctEl = $('pct');
+  if (bar)   bar.style.width   = `${Math.min(pct ?? 0, 100)}%`;
+  if (pctEl) pctEl.textContent = pct != null ? `${Math.round(pct)}%` : '';
 }
 function setStage(msg) { setVal('dr-stage', msg); }
-function setDot(state) { const d=$('dot'); if(d) d.className=`status-dot ${state}`; }
+function setDot(state) { const d = $('dot'); if (d) d.className = `status-dot ${state}`; }
 function highlightCard(id) {
-  ['sc-ping','sc-dl','sc-ul'].forEach(c=>{ const e=$(c); if(e) e.classList.remove('active'); });
-  const el=$(id); if(el) el.classList.add('active');
+  ['sc-ping', 'sc-dl', 'sc-ul'].forEach(c => { const e = $(c); if (e) e.classList.remove('active'); });
+  const el = $(id); if (el) el.classList.add('active');
 }
 function setLoadBar(which, pct) {
-  const row=$(`lb-${which}`), fill=$(`lb-${which}-fill`), pctEl=$(`lb-${which}-pct`);
-  if(row)   row.classList.remove('hidden');
-  if(fill)  fill.style.width  = `${Math.min(pct,100)}%`;
-  if(pctEl) pctEl.textContent = `${Math.round(pct)}%`;
+  const row = $(`lb-${which}`), fill = $(`lb-${which}-fill`), pctEl = $(`lb-${which}-pct`);
+  if (row)   row.classList.remove('hidden');
+  if (fill)  fill.style.width  = `${Math.min(pct, 100)}%`;
+  if (pctEl) pctEl.textContent = `${Math.round(pct)}%`;
 }
-function hideLoadBars() { ['dl','ul'].forEach(w=>{ const r=$(`lb-${w}`); if(r) r.classList.add('hidden'); }); }
+function hideLoadBars() { ['dl', 'ul'].forEach(w => { const r = $(`lb-${w}`); if (r) r.classList.add('hidden'); }); }
 
 // ── Cloudflare PoP ─────────────────────────────────────────────────────────────
 let _popLabel = 'Cloudflare Edge (nearest PoP)';
@@ -162,13 +170,16 @@ async function fetchCFMeta() {
   try {
     const r = await fetch(CF.meta, { cache: 'no-store' });
     const d = await r.json();
-    if (d.colo) {
+    // d.colo = "MAA", d.city = "Chennai", d.country = "IN"
+    if (d && d.colo) {
       const city    = d.city    ? `, ${d.city}`    : '';
-      const country = d.country ? ` (${d.country})`: '';
-      _popLabel = `Cloudflare ${d.colo}${city}${country}`;
+      const country = d.country ? ` (${d.country})` : '';
+      _popLabel = `Cloudflare ${d.colo}${city}${country}`;  // string, not object
     }
   } catch (_) {}
   setVal('conn-server', _popLabel);
+  setVal('conn-sponsor', 'Cloudflare, Inc.');
+  // Fix: server-chip should show short label like "☁ MAA"
   const sc = $('server-chip');
   if (sc) sc.textContent = `☁ ${_popLabel.split(' ')[1] || 'CF'}`;
 }
@@ -187,37 +198,32 @@ async function fetchGeoIP() {
     setVal('geo-tz',      d.timezone);
     setVal('geo-host',    d.hostname !== 'N/A' ? d.hostname : '—');
     if (badge) badge.textContent = d.country;
-    setVal('conn-ip',      d.ip);
-    setVal('conn-sponsor', 'Cloudflare, Inc.');
-    setVal('conn-dist',    '—');
-    setVal('conn-host',    d.hostname !== 'N/A' ? d.hostname : '—');
-    setVal('conn-coords',  d.loc);
+    setVal('conn-ip',     d.ip);
+    setVal('conn-dist',   '—');
+    setVal('conn-host',   d.hostname !== 'N/A' ? d.hostname : '—');
+    setVal('conn-coords', d.loc);
     const ipChip = $('ip-chip'); if (ipChip) ipChip.textContent = d.ip;
-    const cb = $('conn-badge'); if (cb) cb.textContent = d.country;
+    const cb = $('conn-badge');  if (cb)     cb.textContent = d.country;
   } catch (_) {
     try {
-      const r2 = await fetch('https://ip-api.com/json/?fields=status,country,countryCode,regionName,city,isp,org,query,lat,lon,timezone', { cache:'no-store' });
+      const r2 = await fetch('https://ip-api.com/json/?fields=status,country,countryCode,regionName,city,isp,org,query,lat,lon,timezone', { cache: 'no-store' });
       const d2 = await r2.json();
       if (d2.status !== 'success') return;
       setVal('geo-isp',     d2.org || d2.isp);
       setVal('geo-loc',     `${d2.city}, ${d2.regionName}`);
       setVal('geo-country', d2.country);
       setVal('geo-tz',      d2.timezone);
-      setVal('geo-host',    '—');
       setVal('conn-ip',     d2.query);
-      setVal('conn-sponsor','Cloudflare, Inc.');
       setVal('conn-dist',   '—');
-      setVal('conn-host',   '—');
       setVal('conn-coords', `${d2.lat}, ${d2.lon}`);
-      const ipChip=$('ip-chip'); if(ipChip) ipChip.textContent=d2.query;
-      const sc=$('server-chip'); if(sc) sc.textContent='☁ Cloudflare';
-      const badge=$('geo-badge'); if(badge) badge.textContent=d2.countryCode;
-      const cb=$('conn-badge'); if(cb) cb.textContent=d2.countryCode;
+      const ipChip = $('ip-chip'); if (ipChip) ipChip.textContent = d2.query;
+      const badge  = $('geo-badge'); if (badge)  badge.textContent = d2.countryCode;
+      const cb     = $('conn-badge'); if (cb)     cb.textContent = d2.countryCode;
     } catch (_) {}
   }
 }
 
-// ── Latency / Jitter ───────────────────────────────────────────────────────────
+// ── Latency & Jitter ───────────────────────────────────────────────────────────
 async function measureLatency(rounds = 20) {
   const samples = [];
   for (let i = 0; i < rounds; i++) {
@@ -229,89 +235,119 @@ async function measureLatency(rounds = 20) {
     await sleep(50);
   }
   samples.sort((a, b) => a - b);
-  const trimmed = samples.slice(2, -2);          // discard 2 highest + lowest
+  const trimmed = samples.slice(2, -2);
   const ping    = round2(median(trimmed));
-  const jitter  = round2(Math.max(...trimmed) - Math.min(...trimmed));
+  const diffs   = trimmed.slice(1).map((v, i) => Math.abs(v - trimmed[i]));
+  const jitter  = round2(avg(diffs));
   return { ping, jitter };
 }
 
-// ── Download ───────────────────────────────────────────────────────────────────
-// 8 parallel streams × 25 MB each, measured via PerformanceResourceTiming
+// ── Download — ReadableStream so streams run truly in parallel ─────────────────
 async function measureDownload(onTick) {
-  const SIZES    = [25_000_000, 25_000_000, 25_000_000, 25_000_000,
-                    25_000_000, 25_000_000, 25_000_000, 25_000_000];
-  const DURATION = 15000;
-  const start    = performance.now();
-  const deadline = start + DURATION;
-  const samples  = [];
+  const STREAMS  = 6;
+  const BYTES    = 25_000_000;   // 25 MB per stream
+  const DURATION = 15_000;       // 15 s cap
 
-  async function runStream(bytes) {
+  const allSamples = [];
+  const start      = performance.now();
+  const deadline   = start + DURATION;
+
+  async function runStream() {
     while (performance.now() < deadline) {
-      const url = CF.down(bytes);
+      const url = CF.down(BYTES);
       const t0  = performance.now();
+      let received = 0;
       try {
         const resp = await fetch(url, { cache: 'no-store' });
-        await resp.arrayBuffer();
+        if (!resp.ok || !resp.body) break;
+        const reader = resp.body.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done || !value) break;
+          received += value.byteLength;
+          if (performance.now() >= deadline) { reader.cancel(); break; }
+        }
         const elapsed = (performance.now() - t0) / 1000;
-        if (elapsed > 0.05) {
-          const mbps = round2((bytes * 8) / (elapsed * 1_000_000));
-          samples.push(mbps);
-          onTick(round2(avg(samples.slice(-6))));
+        if (received > 0 && elapsed > 0.1) {
+          const mbps = round2((received * 8) / (elapsed * 1_000_000));
+          allSamples.push(mbps);
+          // Rolling avg of last 8 samples for smooth live display
+          onTick(round2(avg(allSamples.slice(-8))));
         }
       } catch (_) { break; }
     }
   }
 
-  await Promise.allSettled(SIZES.map((b, i) => sleep(i * 60).then(() => runStream(b))));
+  // Stagger stream starts by 100 ms each
+  await Promise.allSettled(
+    Array.from({ length: STREAMS }, (_, i) => sleep(i * 100).then(runStream))
+  );
 
-  // Remove top/bottom 10% outliers
-  samples.sort((a, b) => a - b);
-  const cut    = Math.floor(samples.length * 0.1);
-  const clean  = samples.slice(cut, samples.length - cut);
-  return round2(avg(clean)) || round2(avg(samples));
+  if (!allSamples.length) return 0;
+  allSamples.sort((a, b) => a - b);
+  const cut   = Math.max(1, Math.floor(allSamples.length * 0.1));
+  const clean = allSamples.slice(cut, allSamples.length - cut);
+  return round2(avg(clean.length ? clean : allSamples));
 }
 
-// ── Upload ─────────────────────────────────────────────────────────────────────
-async function measureUpload(onTick) {
-  const CHUNK_SIZE = 4_000_000;    // 4 MB per POST
-  const STREAMS    = 4;
-  const DURATION   = 12000;
-  const start      = performance.now();
-  const deadline   = start + DURATION;
-  const samples    = [];
+// ── Upload — uses XHR instead of fetch to avoid CORS preflight rejection ───────
+// speed.cloudflare.com/__up rejects fetch() OPTIONS preflight.
+// XHR simple POST with text/plain bypasses preflight entirely.
+function xhrPost(url, body) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url, true);
+    // text/plain is a "simple" content-type → no CORS preflight
+    xhr.setRequestHeader('Content-Type', 'text/plain');
+    xhr.timeout = 30_000;
+    xhr.onload     = () => resolve(xhr.responseText);
+    xhr.onerror    = () => reject(new Error('XHR error'));
+    xhr.ontimeout  = () => reject(new Error('XHR timeout'));
+    xhr.send(body);
+  });
+}
 
-  // Build random payload once (chunked to stay within 65536 crypto limit)
+async function measureUpload(onTick) {
+  const CHUNK_SIZE = 4_000_000;   // 4 MB per POST
+  const STREAMS    = 4;
+  const DURATION   = 12_000;
+
+  // Build random payload chunked within 65536 crypto limit
   const payload = new Uint8Array(CHUNK_SIZE);
   for (let off = 0; off < CHUNK_SIZE; off += 65536) {
     crypto.getRandomValues(new Uint8Array(payload.buffer, off, Math.min(65536, CHUNK_SIZE - off)));
   }
+  // Convert to string so XHR can send it as text/plain
+  const body = Array.from(payload).map(b => String.fromCharCode(b)).join('');
+
+  const allSamples = [];
+  const start      = performance.now();
+  const deadline   = start + DURATION;
 
   async function runStream() {
     while (performance.now() < deadline) {
       const t0 = performance.now();
       try {
-        await fetch(CF.up, {
-          method:  'POST',
-          body:    payload,
-          cache:   'no-store',
-          headers: { 'Content-Type': 'application/octet-stream', 'X-Bust': Date.now().toString() },
-        });
+        await xhrPost(`${CF.up}?r=${Math.random()}`, body);
         const elapsed = (performance.now() - t0) / 1000;
         if (elapsed > 0.05) {
           const mbps = round2((CHUNK_SIZE * 8) / (elapsed * 1_000_000));
-          samples.push(mbps);
-          onTick(round2(avg(samples.slice(-4))));
+          allSamples.push(mbps);
+          onTick(round2(avg(allSamples.slice(-4))));
         }
       } catch (_) { break; }
     }
   }
 
-  await Promise.allSettled(Array.from({ length: STREAMS }, (_, i) => sleep(i * 100).then(runStream)));
+  await Promise.allSettled(
+    Array.from({ length: STREAMS }, (_, i) => sleep(i * 150).then(runStream))
+  );
 
-  samples.sort((a, b) => a - b);
-  const cut   = Math.floor(samples.length * 0.1);
-  const clean = samples.slice(cut, samples.length - cut);
-  return round2(avg(clean)) || round2(avg(samples));
+  if (!allSamples.length) return 0;
+  allSamples.sort((a, b) => a - b);
+  const cut   = Math.max(1, Math.floor(allSamples.length * 0.1));
+  const clean = allSamples.slice(cut, allSamples.length - cut);
+  return round2(avg(clean.length ? clean : allSamples));
 }
 
 // ── Main Test ──────────────────────────────────────────────────────────────────
@@ -324,15 +360,13 @@ async function startTest() {
   if (btn) { btn.disabled = true; btn.textContent = '…'; }
 
   Gauge.reset(); LiveChart.reset(); hideLoadBars();
-  setVal('sv-ping','--'); setVal('sb-ping','—');
-  setVal('sv-dl','--');   setVal('sb-dl','—');
-  setVal('sv-ul','--');   setVal('sb-ul','—');
-  setStatus('Starting…', 2);
-  setStage('Starting');
-  setDot('running');
+  setVal('sv-ping', '--'); setVal('sb-ping', '—');
+  setVal('sv-dl',   '--'); setVal('sb-dl',   '—');
+  setVal('sv-ul',   '--'); setVal('sb-ul',   '—');
+  setStatus('Starting…', 2); setStage('Starting'); setDot('running');
 
   try {
-    // 1 — Ping & Jitter
+    // 1 — Latency
     setStatus('Measuring latency…', 5);
     setStage('Ping'); highlightCard('sc-ping');
     const { ping, jitter } = await measureLatency(20);
@@ -343,13 +377,11 @@ async function startTest() {
 
     // 2 — Download
     setStatus('Testing download…', 20);
-    setStage('Download'); highlightCard('sc-dl');
-    setLoadBar('dl', 0);
+    setStage('Download'); highlightCard('sc-dl'); setLoadBar('dl', 0);
     let dlPct = 0;
-    const download = await measureDownload((mbps) => {
-      Gauge.set(mbps); LiveChart.push(mbps);
-      setVal('sv-dl', mbps);
-      dlPct = Math.min(dlPct + 1.5, 99);
+    const download = await measureDownload(mbps => {
+      Gauge.set(mbps); LiveChart.push(mbps); setVal('sv-dl', mbps);
+      dlPct = Math.min(dlPct + 1.2, 99);
       setLoadBar('dl', dlPct);
       setStatus(`Download: ${mbps} Mbps`, Math.min(20 + dlPct * 0.45, 65));
     });
@@ -360,13 +392,11 @@ async function startTest() {
 
     // 3 — Upload
     setStatus('Testing upload…', 67);
-    setStage('Upload'); highlightCard('sc-ul');
-    setLoadBar('ul', 0);
+    setStage('Upload'); highlightCard('sc-ul'); setLoadBar('ul', 0);
     let ulPct = 0;
-    const upload = await measureUpload((mbps) => {
-      Gauge.set(mbps); LiveChart.push(mbps);
-      setVal('sv-ul', mbps);
-      ulPct = Math.min(ulPct + 2, 99);
+    const upload = await measureUpload(mbps => {
+      Gauge.set(mbps); LiveChart.push(mbps); setVal('sv-ul', mbps);
+      ulPct = Math.min(ulPct + 1.8, 99);
       setLoadBar('ul', ulPct);
       setStatus(`Upload: ${mbps} Mbps`, Math.min(67 + ulPct * 0.32, 98));
     });
@@ -403,6 +433,6 @@ document.addEventListener('DOMContentLoaded', () => {
   Gauge.init();
   LiveChart.init();
   fetchGeoIP();
-  fetchCFMeta();      // get nearest PoP label immediately on page load
+  fetchCFMeta();
   renderHistory();
 });
