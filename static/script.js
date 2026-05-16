@@ -48,35 +48,83 @@ function qualityInfo(score) {
 const Gauge = (() => {
   let _cur = 0, _tgt = 0;
   const MAX = 1000;
+
   function draw(v) {
     const canvas = document.getElementById('speedo');
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
-    const cx = canvas.width / 2, cy = canvas.height - 20, R = 110;
+    const cx = canvas.width / 2;
+    const cy = canvas.height - 20;
+    const R  = 110;
+
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.beginPath(); ctx.arc(cx, cy, R, Math.PI, 0, false);
-    ctx.lineWidth = 16; ctx.strokeStyle = '#1a1e2a'; ctx.stroke();
-    const angle = Math.PI + Math.min(v / MAX, 1) * Math.PI;
-    const grad = ctx.createLinearGradient(cx - R, cy, cx + R, cy);
-    grad.addColorStop(0, '#818cf8'); grad.addColorStop(0.5, '#38bdf8'); grad.addColorStop(1, '#34d399');
-    ctx.beginPath(); ctx.arc(cx, cy, R, Math.PI, angle, false);
-    ctx.lineWidth = 16; ctx.strokeStyle = grad; ctx.lineCap = 'round'; ctx.stroke();
-    [0, 100, 200, 300, 500, 750, 1000].forEach(t => {
-      const a = Math.PI + (t / MAX) * Math.PI;
+
+    // Base arc
+    ctx.beginPath();
+    ctx.arc(cx, cy, R, Math.PI, 0, false);
+    ctx.lineWidth   = 16;
+    ctx.strokeStyle = '#1a1e2a';
+    ctx.stroke();
+
+    // Value arc
+    const frac  = Math.min(v / MAX, 1);
+    const angle = Math.PI + frac * Math.PI;
+    const grad  = ctx.createLinearGradient(cx - R, cy, cx + R, cy);
+    grad.addColorStop(0,   '#818cf8');
+    grad.addColorStop(0.5, '#38bdf8');
+    grad.addColorStop(1,   '#34d399');
+
+    ctx.beginPath();
+    ctx.arc(cx, cy, R, Math.PI, angle, false);
+    ctx.lineWidth   = 16;
+    ctx.strokeStyle = grad;
+    ctx.lineCap     = 'round';
+    ctx.stroke();
+
+    // Tick marks + numeric labels
+    const stops = [0, 100, 200, 300, 500, 750, 1000];
+    ctx.fillStyle   = '#64748b';
+    ctx.font        = '10px system-ui';
+    ctx.textAlign   = 'center';
+    ctx.textBaseline= 'middle';
+
+    stops.forEach(t => {
+      const f   = t / MAX;
+      const a   = Math.PI + f * Math.PI;
+      const x1  = cx + (R - 22) * Math.cos(a);
+      const y1  = cy + (R - 22) * Math.sin(a);
+      const x2  = cx + (R -  8) * Math.cos(a);
+      const y2  = cy + (R -  8) * Math.sin(a);
+      const tx  = cx + (R + 4)  * Math.cos(a);
+      const ty  = cy + (R + 4)  * Math.sin(a);
+
+      // tick line
       ctx.beginPath();
-      ctx.moveTo(cx + (R - 22) * Math.cos(a), cy + (R - 22) * Math.sin(a));
-      ctx.lineTo(cx + (R - 8)  * Math.cos(a), cy + (R - 8)  * Math.sin(a));
-      ctx.lineWidth = 2; ctx.strokeStyle = '#2a2f3f'; ctx.stroke();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.lineWidth   = 2;
+      ctx.strokeStyle = '#2a2f3f';
+      ctx.stroke();
+
+      // label
+      ctx.fillText(String(t), tx, ty);
     });
   }
+
   function animate() {
+    // easing towards target keeps motion smooth
     _cur += (_tgt - _cur) * 0.12;
     draw(_cur);
     const el = document.getElementById('dr-val');
     if (el) el.textContent = _cur.toFixed(1);
     requestAnimationFrame(animate);
   }
-  return { init() { requestAnimationFrame(animate); }, set(v) { _tgt = v; }, reset() { _tgt = 0; } };
+
+  return {
+    init()  { requestAnimationFrame(animate); },
+    set(v)  { _tgt = v; },
+    reset() { _tgt = 0; },
+  };
 })();
 
 // ── Live Chart ─────────────────────────────────────────────────────────────────
@@ -242,100 +290,114 @@ async function measureLatency(rounds = 20) {
   return { ping, jitter };
 }
 
-// ── Download — ReadableStream so streams run truly in parallel ─────────────────
+// ── Download — aggregate bytes across all streams ─────────────────────────────
 async function measureDownload(onTick) {
   const STREAMS  = 6;
-  const BYTES    = 25_000_000;   // 25 MB per stream
+  const BYTES    = 25_000_000;   // 25 MB requested per stream
   const DURATION = 15_000;       // 15 s cap
 
-  const allSamples = [];
-  const start      = performance.now();
-  const deadline   = start + DURATION;
+  let totalBytes = 0;
+  const samples  = [];
+  const start    = performance.now();
+  const deadline = start + DURATION;
 
   async function runStream() {
     while (performance.now() < deadline) {
       const url = CF.down(BYTES);
-      const t0  = performance.now();
-      let received = 0;
+      let streamBytes = 0;
       try {
         const resp = await fetch(url, { cache: 'no-store' });
         if (!resp.ok || !resp.body) break;
         const reader = resp.body.getReader();
+
         while (true) {
           const { done, value } = await reader.read();
           if (done || !value) break;
-          received += value.byteLength;
-          if (performance.now() >= deadline) { reader.cancel(); break; }
+          const now = performance.now();
+          const dt  = (now - start) / 1000;
+          streamBytes += value.byteLength;
+          totalBytes  += value.byteLength;
+
+          if (dt > 0.2) {
+            const inst = (totalBytes * 8) / (dt * 1_000_000); // Mbps
+            samples.push(inst);
+            onTick(round2(avg(samples.slice(-8)))); // smooth live chart/gauge
+          }
+
+          if (now >= deadline) {
+            try { reader.cancel(); } catch (_) {}
+            break;
+          }
         }
-        const elapsed = (performance.now() - t0) / 1000;
-        if (received > 0 && elapsed > 0.1) {
-          const mbps = round2((received * 8) / (elapsed * 1_000_000));
-          allSamples.push(mbps);
-          // Rolling avg of last 8 samples for smooth live display
-          onTick(round2(avg(allSamples.slice(-8))));
-        }
-      } catch (_) { break; }
+      } catch (_) {
+        break;
+      }
     }
   }
 
-  // Stagger stream starts by 100 ms each
   await Promise.allSettled(
     Array.from({ length: STREAMS }, (_, i) => sleep(i * 100).then(runStream))
   );
 
-  if (!allSamples.length) return 0;
-  allSamples.sort((a, b) => a - b);
-  const cut   = Math.max(1, Math.floor(allSamples.length * 0.1));
-  const clean = allSamples.slice(cut, allSamples.length - cut);
-  return round2(avg(clean.length ? clean : allSamples));
+  if (!samples.length) return 0;
+  samples.sort((a, b) => a - b);
+  const cut   = Math.max(1, Math.floor(samples.length * 0.1));
+  const clean = samples.slice(cut, samples.length - cut);
+  return round2(avg(clean.length ? clean : samples));
 }
 
-// ── Upload — uses XHR instead of fetch to avoid CORS preflight rejection ───────
-// speed.cloudflare.com/__up rejects fetch() OPTIONS preflight.
-// XHR simple POST with text/plain bypasses preflight entirely.
+// ── Upload — aggregate bytes, XHR to avoid CORS preflight ─────────────────────
 function xhrPost(url, body) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', url, true);
-    // text/plain is a "simple" content-type → no CORS preflight
-    xhr.setRequestHeader('Content-Type', 'text/plain');
+    xhr.setRequestHeader('Content-Type', 'text/plain'); // simple request
     xhr.timeout = 30_000;
-    xhr.onload     = () => resolve(xhr.responseText);
-    xhr.onerror    = () => reject(new Error('XHR error'));
-    xhr.ontimeout  = () => reject(new Error('XHR timeout'));
+    xhr.onload    = () => resolve(xhr.responseText);
+    xhr.onerror   = () => reject(new Error('XHR error'));
+    xhr.ontimeout = () => reject(new Error('XHR timeout'));
     xhr.send(body);
   });
 }
 
 async function measureUpload(onTick) {
-  const CHUNK_SIZE = 4_000_000;   // 4 MB per POST
+  const CHUNK_SIZE = 4_000_000;   // 4 MB "logical" payload per request
   const STREAMS    = 4;
   const DURATION   = 12_000;
 
-  // Build random payload chunked within 65536 crypto limit
+  // build random payload (chunked to stay within crypto limit)
   const payload = new Uint8Array(CHUNK_SIZE);
   for (let off = 0; off < CHUNK_SIZE; off += 65536) {
-    crypto.getRandomValues(new Uint8Array(payload.buffer, off, Math.min(65536, CHUNK_SIZE - off)));
+    crypto.getRandomValues(
+      new Uint8Array(payload.buffer, off, Math.min(65536, CHUNK_SIZE - off))
+    );
   }
-  // Convert to string so XHR can send it as text/plain
   const body = Array.from(payload).map(b => String.fromCharCode(b)).join('');
 
-  const allSamples = [];
-  const start      = performance.now();
-  const deadline   = start + DURATION;
+  let sentBytes = 0;
+  const samples = [];
+  const start   = performance.now();
+  const deadline= start + DURATION;
 
   async function runStream() {
     while (performance.now() < deadline) {
       const t0 = performance.now();
       try {
         await xhrPost(`${CF.up}?r=${Math.random()}`, body);
-        const elapsed = (performance.now() - t0) / 1000;
-        if (elapsed > 0.05) {
-          const mbps = round2((CHUNK_SIZE * 8) / (elapsed * 1_000_000));
-          allSamples.push(mbps);
-          onTick(round2(avg(allSamples.slice(-4))));
+        const now = performance.now();
+        const dt  = (now - start) / 1000;
+        const elapsed = (now - t0) / 1000;
+        if (elapsed <= 0.02) continue;   // ignore ultra-short outliers
+
+        sentBytes += CHUNK_SIZE;
+        if (dt > 0.2) {
+          const inst = (sentBytes * 8) / (dt * 1_000_000); // Mbps
+          samples.push(inst);
+          onTick(round2(avg(samples.slice(-4))));
         }
-      } catch (_) { break; }
+      } catch (_) {
+        break;
+      }
     }
   }
 
@@ -343,11 +405,11 @@ async function measureUpload(onTick) {
     Array.from({ length: STREAMS }, (_, i) => sleep(i * 150).then(runStream))
   );
 
-  if (!allSamples.length) return 0;
-  allSamples.sort((a, b) => a - b);
-  const cut   = Math.max(1, Math.floor(allSamples.length * 0.1));
-  const clean = allSamples.slice(cut, allSamples.length - cut);
-  return round2(avg(clean.length ? clean : allSamples));
+  if (!samples.length) return 0;
+  samples.sort((a, b) => a - b);
+  const cut   = Math.max(1, Math.floor(samples.length * 0.1));
+  const clean = samples.slice(cut, samples.length - cut);
+  return round2(avg(clean.length ? clean : samples));
 }
 
 // ── Main Test ──────────────────────────────────────────────────────────────────
