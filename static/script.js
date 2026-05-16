@@ -47,63 +47,72 @@ function qualityInfo(score) {
 // ── Gauge ──────────────────────────────────────────────────────────────────────
 const Gauge = (() => {
   let _cur = 0, _tgt = 0;
-  const MAX = 1000;
+  const MAX = 1000; // Mbps scale
 
   function draw(v) {
     const canvas = document.getElementById('speedo');
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
-    const cx = canvas.width / 2;
-    const cy = canvas.height - 20;
-    const R  = 110;
+    const cx  = canvas.width / 2;
+    const cy  = canvas.height - 20;
+    const R   = 110;
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Base arc
+    // Soft glow behind gauge
+    const glowGrad = ctx.createRadialGradient(cx, cy, R * 0.1, cx, cy, R * 1.1);
+    glowGrad.addColorStop(0, 'rgba(56,189,248,0.25)');
+    glowGrad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = glowGrad;
+    ctx.beginPath();
+    ctx.arc(cx, cy, R + 14, Math.PI, 0, false);
+    ctx.fill();
+
+    // Background arc (track)
     ctx.beginPath();
     ctx.arc(cx, cy, R, Math.PI, 0, false);
-    ctx.lineWidth   = 16;
-    ctx.strokeStyle = '#1a1e2a';
+    ctx.lineWidth   = 18;
+    ctx.strokeStyle = '#111827';
     ctx.stroke();
 
     // Value arc
     const frac  = Math.min(v / MAX, 1);
     const angle = Math.PI + frac * Math.PI;
     const grad  = ctx.createLinearGradient(cx - R, cy, cx + R, cy);
-    grad.addColorStop(0,   '#818cf8');
+    grad.addColorStop(0,   '#22d3ee');
     grad.addColorStop(0.5, '#38bdf8');
-    grad.addColorStop(1,   '#34d399');
+    grad.addColorStop(1,   '#818cf8');
 
     ctx.beginPath();
     ctx.arc(cx, cy, R, Math.PI, angle, false);
-    ctx.lineWidth   = 16;
+    ctx.lineWidth   = 18;
     ctx.strokeStyle = grad;
     ctx.lineCap     = 'round';
     ctx.stroke();
 
     // Tick marks + numeric labels
     const stops = [0, 100, 200, 300, 500, 750, 1000];
-    ctx.fillStyle   = '#64748b';
-    ctx.font        = '10px system-ui';
-    ctx.textAlign   = 'center';
-    ctx.textBaseline= 'middle';
+    ctx.fillStyle    = '#64748b';
+    ctx.font         = '10px system-ui';
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
 
     stops.forEach(t => {
-      const f   = t / MAX;
-      const a   = Math.PI + f * Math.PI;
-      const x1  = cx + (R - 22) * Math.cos(a);
-      const y1  = cy + (R - 22) * Math.sin(a);
-      const x2  = cx + (R -  8) * Math.cos(a);
-      const y2  = cy + (R -  8) * Math.sin(a);
-      const tx  = cx + (R + 4)  * Math.cos(a);
-      const ty  = cy + (R + 4)  * Math.sin(a);
+      const f  = t / MAX;
+      const a  = Math.PI + f * Math.PI;
+      const x1 = cx + (R - 24) * Math.cos(a);
+      const y1 = cy + (R - 24) * Math.sin(a);
+      const x2 = cx + (R - 10) * Math.cos(a);
+      const y2 = cy + (R - 10) * Math.sin(a);
+      const tx = cx + (R + 8)  * Math.cos(a);
+      const ty = cy + (R + 8)  * Math.sin(a);
 
-      // tick line
+      // tick
       ctx.beginPath();
       ctx.moveTo(x1, y1);
       ctx.lineTo(x2, y2);
       ctx.lineWidth   = 2;
-      ctx.strokeStyle = '#2a2f3f';
+      ctx.strokeStyle = '#1f2937';
       ctx.stroke();
 
       // label
@@ -112,8 +121,7 @@ const Gauge = (() => {
   }
 
   function animate() {
-    // easing towards target keeps motion smooth
-    _cur += (_tgt - _cur) * 0.12;
+    _cur += (_tgt - _cur) * 0.12; // easing
     draw(_cur);
     const el = document.getElementById('dr-val');
     if (el) el.textContent = _cur.toFixed(1);
@@ -130,64 +138,141 @@ const Gauge = (() => {
 // ── Live Chart ─────────────────────────────────────────────────────────────────
 const LiveChart = (() => {
   let chart = null;
+  let mode  = 'live'; // 'live' or 'history'
+
   function init() {
     const ctx = document.getElementById('myChart');
     if (!ctx || !window.Chart) return;
+
     chart = new Chart(ctx, {
       type: 'line',
-      data: { labels: [], datasets: [{ label: 'Mbps', data: [],
-        borderColor: '#38bdf8', backgroundColor: 'rgba(56,189,248,0.07)',
-        borderWidth: 2, pointRadius: 0, tension: 0.4, fill: true }] },
-      options: { responsive: true, animation: { duration: 0 },
+      data: {
+        labels: [],
+        datasets: [{
+          label: 'Mbps',
+          data: [],
+          borderColor: '#38bdf8',
+          backgroundColor: 'rgba(56,189,248,0.07)',
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: 0.4,
+          fill: true,
+        }],
+      },
+      options: {
+        responsive: true,
+        animation: { duration: 0 },
         scales: {
           x: { display: false },
-          y: { beginAtZero: true, grid: { color: '#1a1e2a' }, ticks: { color: '#64748b', maxTicksLimit: 5 } },
+          y: {
+            beginAtZero: true,
+            grid:  { color: '#1a1e2a' },
+            ticks: { color: '#64748b', maxTicksLimit: 5 },
+          },
         },
-        plugins: { legend: { display: false }, tooltip: { enabled: false } } },
+        plugins: {
+          legend:  { display: false },
+          tooltip: { enabled: false },
+        },
+      },
     });
   }
-  function push(v) {
+
+  // Live (trend) mode
+  function showLive() {
     if (!chart) return;
+    mode = 'live';
+    chart.config.type   = 'line';
+    chart.data.labels   = [];
+    chart.data.datasets = [{
+      label: 'Mbps',
+      data: [],
+      borderColor: '#38bdf8',
+      backgroundColor: 'rgba(56,189,248,0.07)',
+      borderWidth: 2,
+      pointRadius: 0,
+      tension: 0.4,
+      fill: true,
+    }];
+    chart.update('none');
+    const b = $('chart-badge');
+    if (b) b.textContent = 'Live';
+    const w = $('chart-wrap'), e = $('chart-empty');
+    if (w) w.style.display = 'none';
+    if (e) e.style.display = 'flex';
+  }
+
+  // History bar chart
+  function showHistory() {
+    if (!chart) return;
+    const hist = getHistory();
+    if (!hist.length) {
+      showLive(); // nothing to show, keep \"Run a test\" state
+      return;
+    }
+
+    mode = 'history';
+    const labels = hist.map((r, i) => `#${i + 1}`);
+    const dls    = hist.map(r => r.download);
+    const uls    = hist.map(r => r.upload);
+
+    chart.config.type = 'bar';
+    chart.data.labels = labels;
+    chart.data.datasets = [
+      {
+        label: 'Download',
+        data: dls,
+        backgroundColor: 'rgba(34,211,238,0.6)',
+      },
+      {
+        label: 'Upload',
+        data: uls,
+        backgroundColor: 'rgba(129,140,248,0.6)',
+      },
+    ];
+    chart.options.plugins.legend.display = true;
+    chart.update('none');
+
+    const b = $('chart-badge');
+    if (b) b.textContent = 'History';
+
+    const w = $('chart-wrap'), e = $('chart-empty');
+    if (w) w.style.display = 'block';
+    if (e) e.style.display = 'none';
+  }
+
+  function push(v) {
+    if (!chart || mode !== 'live') return;
     chart.data.labels.push('');
     chart.data.datasets[0].data.push(v);
-    if (chart.data.labels.length > 80) { chart.data.labels.shift(); chart.data.datasets[0].data.shift(); }
+    if (chart.data.labels.length > 80) {
+      chart.data.labels.shift();
+      chart.data.datasets[0].data.shift();
+    }
     chart.update('none');
     const w = $('chart-wrap'), e = $('chart-empty'), b = $('chart-badge');
-    if (w) w.style.display = 'block'; if (e) e.style.display = 'none'; if (b) b.textContent = 'Live';
+    if (w) w.style.display = 'block';
+    if (e) e.style.display = 'none';
+    if (b) b.textContent = 'Live';
   }
+
   function reset() {
     if (!chart) return;
-    chart.data.labels = []; chart.data.datasets[0].data = []; chart.update('none');
-    const w = $('chart-wrap'), e = $('chart-empty'), b = $('chart-badge');
-    if (w) w.style.display = 'none'; if (e) e.style.display = 'block'; if (b) b.textContent = 'No data';
+    if (mode === 'live') {
+      chart.data.labels = [];
+      chart.data.datasets[0].data = [];
+      chart.update('none');
+      const w = $('chart-wrap'), e = $('chart-empty'), b = $('chart-badge');
+      if (w) w.style.display = 'none';
+      if (e) e.style.display = 'flex';
+      if (b) b.textContent = 'No data';
+    } else {
+      showHistory();
+    }
   }
-  return { init, push, reset };
-})();
 
-// ── History ────────────────────────────────────────────────────────────────────
-const HIST_KEY = 'netpulse_v6';
-const HIST_MAX = 10;
-function saveHistory(r)  { const h = getHistory(); h.push(r); if (h.length > HIST_MAX) h.shift(); localStorage.setItem(HIST_KEY, JSON.stringify(h)); }
-function getHistory()    { try { return JSON.parse(localStorage.getItem(HIST_KEY)) || []; } catch (_) { return []; } }
-function clearHistory()  { localStorage.removeItem(HIST_KEY); renderHistory(); }
-function renderHistory() {
-  const c = document.getElementById('hist-scroll'); if (!c) return;
-  const hist = getHistory().slice().reverse();
-  if (!hist.length) { c.innerHTML = '<div class="hist-empty">No tests recorded</div>'; return; }
-  c.innerHTML = hist.map(r => {
-    const qi = qualityInfo(r.score || 0);
-    return `<div class="hist-item" style="padding:10px 0;border-bottom:1px solid #1a1e2a">
-      <div style="font-size:0.75rem;color:#64748b;margin-bottom:4px">${r.time} · ${r.server}</div>
-      <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center">
-        <span style="color:#34d399;font-weight:700">↓ ${r.download} Mbps</span>
-        <span style="color:#818cf8;font-weight:700">↑ ${r.upload} Mbps</span>
-        <span style="color:#94a3b8">Ping ${r.ping} ms</span>
-        <span style="color:#94a3b8">Jitter ${r.jitter} ms</span>
-        <span style="background:${qi.color}22;color:${qi.color};padding:2px 8px;border-radius:6px;font-size:0.78rem;margin-left:auto">
-          ${r.score} — ${qi.label}</span>
-      </div></div>`;
-  }).join('');
-}
+  return { init, push, reset, showHistory, showLive };
+})();
 
 // ── DOM Helpers ────────────────────────────────────────────────────────────────
 const $      = id => document.getElementById(id);
@@ -452,18 +537,33 @@ async function startTest() {
     setStatus(`Download: ${download} Mbps`, 65);
     await sleep(200);
 
-    // 3 — Upload
+        // 3 — Upload
     setStatus('Testing upload…', 67);
-    setStage('Upload'); highlightCard('sc-ul'); setLoadBar('ul', 0);
-    let ulPct = 0;
+    setStage('Upload');
+    highlightCard('sc-ul');
+    setLoadBar('ul', 0);
+
+    const ulStart   = performance.now();
+    const UL_WINDOW = 12_000; // match DURATION inside measureUpload
+
     const upload = await measureUpload(mbps => {
-      Gauge.set(mbps); LiveChart.push(mbps); setVal('sv-ul', mbps);
-      ulPct = Math.min(ulPct + 1.8, 99);
-      setLoadBar('ul', ulPct);
-      setStatus(`Upload: ${mbps} Mbps`, Math.min(67 + ulPct * 0.32, 98));
+      Gauge.set(mbps);
+      LiveChart.push(mbps);
+      setVal('sv-ul', mbps);
+
+      const elapsed = performance.now() - ulStart;
+      const frac    = Math.min(elapsed / UL_WINDOW, 0.99);
+      const pct     = Math.round(frac * 100);
+
+      setLoadBar('ul', pct);
+      // 67 → 98 during upload
+      setStatus(`Upload: ${mbps} Mbps`, 67 + frac * 31);
     });
-    setVal('sv-ul', upload); setVal('sb-ul', `${upload} Mbps`);
-    setLoadBar('ul', 100); Gauge.set(download);
+
+    setVal('sv-ul', upload);
+    setVal('sb-ul', `${upload} Mbps`);
+    setLoadBar('ul', 100);
+    Gauge.set(download);  // keep final gauge on download
 
     // 4 — Score
     const score = qualityScore({ download, upload, ping, jitter });
